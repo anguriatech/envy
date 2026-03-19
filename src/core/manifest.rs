@@ -115,8 +115,7 @@ mod tests {
         )
         .expect("write envy.toml");
 
-        let (manifest, found_dir) =
-            find_manifest(tmp.path()).expect("find_manifest must succeed");
+        let (manifest, found_dir) = find_manifest(tmp.path()).expect("find_manifest must succeed");
         assert_eq!(manifest.project_id, project_id);
         assert_eq!(found_dir, tmp.path());
     }
@@ -135,8 +134,7 @@ mod tests {
         )
         .expect("write envy.toml");
 
-        let (manifest, found_dir) =
-            find_manifest(&grandchild).expect("find_manifest must succeed");
+        let (manifest, found_dir) = find_manifest(&grandchild).expect("find_manifest must succeed");
         assert_eq!(manifest.project_id, project_id);
         assert_eq!(found_dir, parent.path());
     }
@@ -169,14 +167,12 @@ mod tests {
         );
 
         // (2) project_id field round-trips through TOML.
-        let content =
-            std::fs::read_to_string(tmp.path().join("envy.toml")).expect("read file");
+        let content = std::fs::read_to_string(tmp.path().join("envy.toml")).expect("read file");
         let parsed: Manifest = toml::from_str(&content).expect("parse TOML");
         assert_eq!(parsed.project_id, project_id);
 
         // (3) find_manifest returns Ok with matching project_id.
-        let (found, _dir) =
-            find_manifest(tmp.path()).expect("find_manifest must succeed");
+        let (found, _dir) = find_manifest(tmp.path()).expect("find_manifest must succeed");
         assert_eq!(found.project_id, project_id);
     }
 }

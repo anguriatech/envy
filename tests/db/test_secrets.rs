@@ -37,7 +37,11 @@ fn test_upsert_secret_succeeds() {
         .upsert_secret(&env_id, "DATABASE_URL", ciphertext, &NONCE_12)
         .expect("upsert_secret must succeed with a 12-byte nonce");
 
-    assert_eq!(secret_id.as_str().len(), 36, "SecretId must be a 36-character UUID");
+    assert_eq!(
+        secret_id.as_str().len(),
+        36,
+        "SecretId must be a 36-character UUID"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -61,8 +65,15 @@ fn test_get_secret_returns_exact_bytes() {
         .expect("get_secret must find the just-upserted secret");
 
     assert_eq!(record.key, "MY_KEY");
-    assert_eq!(record.value_encrypted, ciphertext, "value_encrypted must match byte-for-byte");
-    assert_eq!(record.value_nonce, nonce.to_vec(), "value_nonce must match byte-for-byte");
+    assert_eq!(
+        record.value_encrypted, ciphertext,
+        "value_encrypted must match byte-for-byte"
+    );
+    assert_eq!(
+        record.value_nonce,
+        nonce.to_vec(),
+        "value_nonce must match byte-for-byte"
+    );
     assert_eq!(record.environment_id, env_id);
     assert!(record.created_at > 0, "created_at must be a non-zero epoch");
     assert!(record.updated_at > 0, "updated_at must be a non-zero epoch");
@@ -206,11 +217,20 @@ fn test_list_secrets_order() {
     let empty = vault
         .list_secrets(&env_id)
         .expect("list_secrets on empty environment must return Ok(vec![])");
-    assert!(empty.is_empty(), "list_secrets on empty environment must return []");
+    assert!(
+        empty.is_empty(),
+        "list_secrets on empty environment must return []"
+    );
 
-    vault.upsert_secret(&env_id, "ZEBRA", b"z", &NONCE_12).expect("upsert ZEBRA");
-    vault.upsert_secret(&env_id, "ALPHA", b"a", &NONCE_12).expect("upsert ALPHA");
-    vault.upsert_secret(&env_id, "MANGO", b"m", &NONCE_12).expect("upsert MANGO");
+    vault
+        .upsert_secret(&env_id, "ZEBRA", b"z", &NONCE_12)
+        .expect("upsert ZEBRA");
+    vault
+        .upsert_secret(&env_id, "ALPHA", b"a", &NONCE_12)
+        .expect("upsert ALPHA");
+    vault
+        .upsert_secret(&env_id, "MANGO", b"m", &NONCE_12)
+        .expect("upsert MANGO");
 
     let list = vault
         .list_secrets(&env_id)
@@ -249,8 +269,12 @@ fn test_same_key_in_different_environments() {
         .upsert_secret(&env_prod, "DATABASE_URL", b"prod-cipher", &NONCE_12)
         .expect("upsert in production");
 
-    let dev_record = vault.get_secret(&env_dev, "DATABASE_URL").expect("get dev secret");
-    let prod_record = vault.get_secret(&env_prod, "DATABASE_URL").expect("get prod secret");
+    let dev_record = vault
+        .get_secret(&env_dev, "DATABASE_URL")
+        .expect("get dev secret");
+    let prod_record = vault
+        .get_secret(&env_prod, "DATABASE_URL")
+        .expect("get prod secret");
 
     assert_eq!(dev_record.value_encrypted, b"dev-cipher".to_vec());
     assert_eq!(prod_record.value_encrypted, b"prod-cipher".to_vec());

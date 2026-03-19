@@ -12,8 +12,8 @@ use rusqlite::params;
 use uuid::Uuid;
 
 use super::{
-    error::{map_rusqlite_error, not_found_or, DbError},
     ProjectId, Vault,
+    error::{DbError, map_rusqlite_error, not_found_or},
 };
 
 /// A project record as stored in the vault.
@@ -108,10 +108,7 @@ impl Vault {
     pub fn delete_project(&self, id: &ProjectId) -> Result<(), DbError> {
         let changed = self
             .conn
-            .execute(
-                "DELETE FROM projects WHERE id = ?1",
-                params![id.as_str()],
-            )
+            .execute("DELETE FROM projects WHERE id = ?1", params![id.as_str()])
             .map_err(map_rusqlite_error)?;
 
         if changed == 0 {

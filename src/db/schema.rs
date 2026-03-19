@@ -6,7 +6,7 @@
 //! Current versions:
 //!   0 → 1: Initial schema (projects, environments, secrets).
 
-use super::error::{is_encryption_error, DbError};
+use super::error::{DbError, is_encryption_error};
 
 /// Full DDL for schema version 1.
 ///

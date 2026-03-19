@@ -6,8 +6,8 @@
 //! the backing memory is zeroed when the caller drops it.
 
 use aes_gcm::{
-    aead::{generic_array::GenericArray, Aead, AeadCore, KeyInit, OsRng},
     Aes256Gcm,
+    aead::{Aead, AeadCore, KeyInit, OsRng, generic_array::GenericArray},
 };
 use zeroize::Zeroizing;
 
@@ -45,8 +45,7 @@ pub struct EncryptedSecret {
 /// structurally impossible with a valid 32-byte key and is treated as an internal error.
 pub fn encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<EncryptedSecret, CryptoError> {
     // SAFETY: key is typed &[u8; 32], so new_from_slice will never return InvalidLength.
-    let cipher =
-        Aes256Gcm::new_from_slice(key).expect("key is &[u8; 32]: length is always valid");
+    let cipher = Aes256Gcm::new_from_slice(key).expect("key is &[u8; 32]: length is always valid");
     let nonce_ga = Aes256Gcm::generate_nonce(&mut OsRng);
     let ciphertext = cipher
         .encrypt(&nonce_ga, plaintext)
@@ -81,8 +80,7 @@ pub fn decrypt(
         return Err(CryptoError::InvalidNonce);
     }
     // SAFETY: key is typed &[u8; 32], so new_from_slice will never return InvalidLength.
-    let cipher =
-        Aes256Gcm::new_from_slice(key).expect("key is &[u8; 32]: length is always valid");
+    let cipher = Aes256Gcm::new_from_slice(key).expect("key is &[u8; 32]: length is always valid");
     // GenericArray::from_slice would panic if len != 12; we validated above so this is safe.
     // Type inference resolves the size from cipher.decrypt's expected &Nonce<Aes256Gcm>.
     let nonce = GenericArray::from_slice(nonce);
@@ -156,8 +154,7 @@ mod tests {
     // T009
     #[test]
     fn empty_plaintext_succeeds() {
-        let secret =
-            encrypt(&KEY_A, b"").expect("encrypt must succeed for empty plaintext");
+        let secret = encrypt(&KEY_A, b"").expect("encrypt must succeed for empty plaintext");
         let plaintext = decrypt(&KEY_A, &secret.ciphertext, &secret.nonce)
             .expect("decrypt must succeed for empty plaintext");
         assert_eq!(plaintext.as_slice(), b"");
@@ -200,8 +197,7 @@ mod tests {
 
         let secret = encrypt(&KEY_A, b"secret data").expect("encrypt must succeed");
         let mut decrypted = ManuallyDrop::new(
-            decrypt(&KEY_A, &secret.ciphertext, &secret.nonce)
-                .expect("decrypt must succeed"),
+            decrypt(&KEY_A, &secret.ciphertext, &secret.nonce).expect("decrypt must succeed"),
         );
 
         let ptr = decrypted.as_ptr();

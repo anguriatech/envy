@@ -49,13 +49,11 @@ fn test_sentinel_not_visible_in_raw_vault_file() {
         // Explicitly close to flush and checkpoint the WAL file before reading
         // raw bytes. Without this, data may still be in the WAL rather than
         // the main .db file, causing a false-positive pass.
-        vault
-            .close()
-            .expect("Vault::close must succeed");
+        vault.close().expect("Vault::close must succeed");
     }
 
-    let file_bytes = std::fs::read(&vault_path)
-        .expect("reading the vault file must succeed after close");
+    let file_bytes =
+        std::fs::read(&vault_path).expect("reading the vault file must succeed after close");
 
     assert!(
         !file_bytes.windows(sentinel.len()).any(|w| w == sentinel),
@@ -75,8 +73,7 @@ fn test_sentinel_not_visible_in_raw_vault_file() {
 fn test_cipher_version_is_available() {
     let tmp = tempfile::NamedTempFile::new()
         .expect("NamedTempFile::new always succeeds in a writable temp dir");
-    let vault = Vault::open(tmp.path(), &DUMMY_KEY)
-        .expect("Vault::open must succeed");
+    let vault = Vault::open(tmp.path(), &DUMMY_KEY).expect("Vault::open must succeed");
 
     let version = vault
         .pragma_str("cipher_version")

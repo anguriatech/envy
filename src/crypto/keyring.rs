@@ -9,8 +9,8 @@
 //! - [`get_or_create_master_key`] — fetch or generate the master key.
 
 use aes_gcm::{
-    aead::{KeyInit, OsRng},
     Aes256Gcm,
+    aead::{KeyInit, OsRng},
 };
 use zeroize::Zeroizing;
 
@@ -130,12 +130,10 @@ mod tests {
     #[test]
     #[ignore]
     fn get_or_create_master_key_is_idempotent() {
-        let key1 =
-            get_or_create_master_key().expect("must succeed with a live keyring daemon");
+        let key1 = get_or_create_master_key().expect("must succeed with a live keyring daemon");
         assert_eq!(key1.len(), 32, "returned key must be exactly 32 bytes");
 
-        let key2 =
-            get_or_create_master_key().expect("second call must also succeed");
+        let key2 = get_or_create_master_key().expect("second call must also succeed");
         assert_eq!(
             *key1, *key2,
             "key must be identical on repeated calls (idempotent)"

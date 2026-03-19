@@ -71,9 +71,7 @@ pub(super) fn map_rusqlite_error(e: rusqlite::Error) -> DbError {
         }
         // Other constraint violations (FK, CHECK, NOT NULL, etc.)
         if err.code == rusqlite::ErrorCode::ConstraintViolation {
-            return DbError::ConstraintViolation(
-                msg.clone().unwrap_or_else(|| e.to_string()),
-            );
+            return DbError::ConstraintViolation(msg.clone().unwrap_or_else(|| e.to_string()));
         }
     }
     DbError::Internal(e.to_string())

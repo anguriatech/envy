@@ -10,7 +10,7 @@ mod manifest;
 mod ops;
 
 pub use error::CoreError;
-pub use manifest::{create_manifest, find_manifest, Manifest};
+pub use manifest::{Manifest, create_manifest, find_manifest};
 pub use ops::{
-    delete_secret, get_env_secrets, get_secret, list_secret_keys, set_secret, DEFAULT_ENV,
+    DEFAULT_ENV, delete_secret, get_env_secrets, get_secret, list_secret_keys, set_secret,
 };

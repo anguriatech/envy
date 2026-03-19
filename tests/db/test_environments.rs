@@ -33,7 +33,11 @@ fn test_create_environment_succeeds() {
         .expect("create_environment must succeed with a valid lowercase name");
 
     // UUID v4 hyphenated format: 36 chars
-    assert_eq!(env_id.as_str().len(), 36, "EnvId must be a 36-character UUID");
+    assert_eq!(
+        env_id.as_str().len(),
+        36,
+        "EnvId must be a 36-character UUID"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -171,11 +175,20 @@ fn test_list_environments_order() {
     let empty = vault
         .list_environments(&project_id)
         .expect("list_environments on empty project must return Ok(vec![])");
-    assert!(empty.is_empty(), "list_environments on empty project must return []");
+    assert!(
+        empty.is_empty(),
+        "list_environments on empty project must return []"
+    );
 
-    vault.create_environment(&project_id, "staging").expect("create staging");
-    vault.create_environment(&project_id, "development").expect("create development");
-    vault.create_environment(&project_id, "production").expect("create production");
+    vault
+        .create_environment(&project_id, "staging")
+        .expect("create staging");
+    vault
+        .create_environment(&project_id, "development")
+        .expect("create development");
+    vault
+        .create_environment(&project_id, "production")
+        .expect("create production");
 
     let list = vault
         .list_environments(&project_id)

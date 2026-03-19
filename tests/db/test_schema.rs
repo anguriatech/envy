@@ -74,14 +74,13 @@ fn test_reopen_is_idempotent() {
 
     // First open — runs migrations, sets user_version = 1.
     {
-        let vault = Vault::open(tmp.path(), &DUMMY_KEY)
-            .expect("first open must succeed");
+        let vault = Vault::open(tmp.path(), &DUMMY_KEY).expect("first open must succeed");
         vault.close().expect("close must succeed");
     }
 
     // Second open — should succeed without error and leave user_version = 1.
-    let vault = Vault::open(tmp.path(), &DUMMY_KEY)
-        .expect("second open of the same vault must succeed");
+    let vault =
+        Vault::open(tmp.path(), &DUMMY_KEY).expect("second open of the same vault must succeed");
     let version = vault
         .pragma_int("user_version")
         .expect("pragma_int must succeed on second open");
@@ -129,8 +128,7 @@ fn test_wrong_key_returns_encryption_error() {
 
     // Create and seal the vault with the dummy key.
     {
-        let vault = Vault::open(tmp.path(), &DUMMY_KEY)
-            .expect("first open must succeed");
+        let vault = Vault::open(tmp.path(), &DUMMY_KEY).expect("first open must succeed");
         vault.close().expect("close must succeed");
     }
 

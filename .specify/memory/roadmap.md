@@ -64,20 +64,27 @@ envy init
 # Adds or updates a variable in the default environment (development)
 envy set STRIPE_KEY=sk_test_12345
 
-# Adds a variable to a specific environment
-envy set DATABASE_URL=postgres://prod-db --env=production
+# Adds a variable to a specific environment (short flag: -e)
+envy set DATABASE_URL=postgres://prod-db -e production
 
-# Lists all variables for the current environment (masking sensitive values by default)
+# Lists all variables for the current environment (alias: ls)
 envy list
+envy ls                              # short alias
+
+# Lists variables for a specific environment
+envy ls -e staging
 
 # Displays the exact, decrypted value of a variable
 envy get STRIPE_KEY
+envy get STRIPE_KEY -e production    # from a specific environment
 
-# Deletes a variable
+# Deletes a variable (alias: remove)
 envy rm STRIPE_KEY
+envy remove STRIPE_KEY               # long alias
 
 # Migrates an existing plaintext .env file into the encrypted vault
-envy import-legacy .env
+envy migrate .env
+envy migrate .env -e staging         # migrate into a specific environment
 ```
 
 ### 3. Execution (The Wrapper)
@@ -85,8 +92,11 @@ envy import-legacy .env
 # Injects the 'development' variables into memory and spawns the child process
 envy run -- npm run dev
 
-# Injects the 'staging' variables into memory and spawns the child process
-envy run --env=staging -- python main.py
+# Injects the 'staging' variables into memory and spawns the child process (short flag: -e)
+envy run -e staging -- python main.py
+
+# Works with any command after the -- separator
+envy run -e production -- ./server --port 8080
 ```
 
 ---

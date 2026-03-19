@@ -17,8 +17,8 @@ use rusqlite::params;
 use uuid::Uuid;
 
 use super::{
-    error::{map_rusqlite_error, not_found_or, DbError},
     EnvId, SecretId, Vault,
+    error::{DbError, map_rusqlite_error, not_found_or},
 };
 
 /// A secret record as stored in the vault.

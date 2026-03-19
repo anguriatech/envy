@@ -56,8 +56,14 @@ fn test_get_project_returns_correct_name() {
 
     assert_eq!(project.name, "hello-world");
     assert_eq!(project.id, id);
-    assert!(project.created_at > 0, "created_at must be a non-zero epoch");
-    assert!(project.updated_at > 0, "updated_at must be a non-zero epoch");
+    assert!(
+        project.created_at > 0,
+        "created_at must be a non-zero epoch"
+    );
+    assert!(
+        project.updated_at > 0,
+        "updated_at must be a non-zero epoch"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -120,7 +126,10 @@ fn test_list_projects_order() {
     let empty = vault
         .list_projects()
         .expect("list_projects on empty vault must return Ok(vec![])");
-    assert!(empty.is_empty(), "list_projects on empty vault must return []");
+    assert!(
+        empty.is_empty(),
+        "list_projects on empty vault must return []"
+    );
 
     // Insert three projects.
     let id_a = vault.create_project("alpha").expect("create alpha");
@@ -174,8 +183,7 @@ fn test_delete_project_removes_record() {
 fn test_delete_project_not_found() {
     let (vault, _tmp) = open_temp_vault();
 
-    let result =
-        vault.delete_project(&ProjectId("00000000-0000-0000-0000-000000000000".into()));
+    let result = vault.delete_project(&ProjectId("00000000-0000-0000-0000-000000000000".into()));
 
     assert!(
         matches!(result, Err(DbError::NotFound)),
@@ -191,8 +199,12 @@ fn test_delete_project_not_found() {
 fn test_two_projects_same_name_have_distinct_ids() {
     let (vault, _tmp) = open_temp_vault();
 
-    let id_1 = vault.create_project("duplicate-name").expect("first create");
-    let id_2 = vault.create_project("duplicate-name").expect("second create");
+    let id_1 = vault
+        .create_project("duplicate-name")
+        .expect("first create");
+    let id_2 = vault
+        .create_project("duplicate-name")
+        .expect("second create");
 
     assert_ne!(
         id_1, id_2,

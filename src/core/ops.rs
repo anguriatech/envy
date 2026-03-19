@@ -151,7 +151,11 @@ pub fn list_secret_keys(
     let name = normalize_env(env_name);
     let env = vault.get_environment_by_name(project_id, &name)?;
     // `list_secrets` returns rows ORDER BY key ASC, so no sort needed here.
-    Ok(vault.list_secrets(&env.id)?.into_iter().map(|r| r.key).collect())
+    Ok(vault
+        .list_secrets(&env.id)?
+        .into_iter()
+        .map(|r| r.key)
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -207,11 +211,8 @@ pub fn get_env_secrets(
     for record in records {
         // `?` here makes the whole loop short-circuit on any decrypt failure,
         // guaranteeing atomicity: no partial map is ever returned to the caller.
-        let plaintext_bytes = crate::crypto::decrypt(
-            master_key,
-            &record.value_encrypted,
-            &record.value_nonce,
-        )?;
+        let plaintext_bytes =
+            crate::crypto::decrypt(master_key, &record.value_encrypted, &record.value_nonce)?;
         let string = String::from_utf8(plaintext_bytes.to_vec())
             .map_err(|_| CoreError::Crypto(crate::crypto::CryptoError::DecryptionFailed))?;
         map.insert(record.key, Zeroizing::new(string));
@@ -233,7 +234,9 @@ mod tests {
     fn open_test_vault(tmp: &tempfile::TempDir) -> (Vault, ProjectId) {
         let path = tmp.path().join("test.vault");
         let vault = Vault::open(&path, &[0u8; 32]).expect("open vault");
-        let pid = vault.create_project("test-project").expect("create project");
+        let pid = vault
+            .create_project("test-project")
+            .expect("create project");
         (vault, pid)
     }
 
@@ -244,12 +247,15 @@ mod tests {
         let (vault, pid) = open_test_vault(&tmp);
         let key = [0u8; 32];
 
-        set_secret(&vault, &key, &pid, "test", "API_KEY", "secret123")
-            .expect("set must succeed");
+        set_secret(&vault, &key, &pid, "test", "API_KEY", "secret123").expect("set must succeed");
 
         // Raw DB bytes must not contain the plaintext.
-        let env = vault.get_environment_by_name(&pid, "test").expect("env must exist");
-        let record = vault.get_secret(&env.id, "API_KEY").expect("record must exist");
+        let env = vault
+            .get_environment_by_name(&pid, "test")
+            .expect("env must exist");
+        let record = vault
+            .get_secret(&env.id, "API_KEY")
+            .expect("record must exist");
         assert!(
             !record.value_encrypted.windows(9).any(|w| w == b"secret123"),
             "plaintext must not appear in ciphertext"
@@ -273,7 +279,11 @@ mod tests {
 
         let plaintext =
             get_secret(&vault, &key, &pid, "test", "API_KEY").expect("get must succeed");
-        assert_eq!(plaintext.as_str(), "v2", "last write must win (upsert semantics)");
+        assert_eq!(
+            plaintext.as_str(),
+            "v2",
+            "last write must win (upsert semantics)"
+        );
     }
 
     // T015
@@ -306,7 +316,11 @@ mod tests {
         set_secret(&vault, &key, &pid, "test", "MANGO", "m").expect("set MANGO");
 
         let keys = list_secret_keys(&vault, &pid, "test").expect("list must succeed");
-        assert_eq!(keys, vec!["ALPHA", "MANGO", "ZEBRA"], "keys must be alphabetical");
+        assert_eq!(
+            keys,
+            vec!["ALPHA", "MANGO", "ZEBRA"],
+            "keys must be alphabetical"
+        );
         assert_eq!(keys.len(), 3);
     }
 
@@ -373,7 +387,11 @@ mod tests {
 
         let secrets = get_env_secrets(&vault, &[0u8; 32], &pid, "empty")
             .expect("must succeed even with no secrets");
-        assert!(secrets.is_empty(), "expected empty map, got {} entries", secrets.len());
+        assert!(
+            secrets.is_empty(),
+            "expected empty map, got {} entries",
+            secrets.len()
+        );
     }
 
     // T021
@@ -393,7 +411,12 @@ mod tests {
             .get_environment_by_name(&pid, "test")
             .expect("env must exist after set_secret");
         vault
-            .upsert_secret(&env.id, "CORRUPTED", b"not-valid-gcm-ciphertext-xxxxx", &[0u8; 12])
+            .upsert_secret(
+                &env.id,
+                "CORRUPTED",
+                b"not-valid-gcm-ciphertext-xxxxx",
+                &[0u8; 12],
+            )
             .expect("upsert raw garbage ciphertext");
 
         let result = get_env_secrets(&vault, &key, &pid, "test");

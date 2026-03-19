@@ -17,8 +17,8 @@ use rusqlite::params;
 use uuid::Uuid;
 
 use super::{
-    error::{map_rusqlite_error, not_found_or, DbError},
     EnvId, ProjectId, Vault,
+    error::{DbError, map_rusqlite_error, not_found_or},
 };
 
 /// An environment record as stored in the vault.
@@ -49,11 +49,7 @@ impl Vault {
     ///   within `project_id`.
     /// - [`DbError::ConstraintViolation`] if `project_id` does not exist (FK violation)
     ///   or if `name` contains uppercase characters.
-    pub fn create_environment(
-        &self,
-        project_id: &ProjectId,
-        name: &str,
-    ) -> Result<EnvId, DbError> {
+    pub fn create_environment(&self, project_id: &ProjectId, name: &str) -> Result<EnvId, DbError> {
         let id = Uuid::new_v4().to_string();
         self.conn
             .execute(

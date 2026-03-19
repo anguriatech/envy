@@ -9,10 +9,10 @@
 //! - `encrypt` / `decrypt` / [`EncryptedSecret`] — AES-256-GCM AEAD (Phase 3).
 //! - `get_or_create_master_key` — OS Credential Manager key management (Phase 4).
 
-mod error;
 mod aead;
+mod error;
 mod keyring;
 
+pub use aead::{EncryptedSecret, decrypt, encrypt};
 pub use error::CryptoError;
-pub use aead::{decrypt, encrypt, EncryptedSecret};
 pub use keyring::get_or_create_master_key;

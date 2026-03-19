@@ -7,17 +7,17 @@
 //! - All public functions return `Result<T, DbError>`.
 //! - `.unwrap()` and `.expect()` are prohibited in this module.
 
-mod error;
 mod environments;
+mod error;
 mod projects;
 mod schema;
 mod secrets;
 
 pub use environments::Environment;
 pub use error::DbError;
+use error::map_rusqlite_error;
 pub use projects::Project;
 pub use secrets::SecretRecord;
-use error::map_rusqlite_error;
 
 use std::path::Path;
 
@@ -103,8 +103,8 @@ impl Vault {
     ///   SQLCipher database.
     /// - [`DbError::MigrationError`] if schema creation fails.
     pub fn open(vault_path: &Path, master_key: &[u8]) -> Result<Self, DbError> {
-        let conn = rusqlite::Connection::open(vault_path)
-            .map_err(|e| DbError::IoError(e.to_string()))?;
+        let conn =
+            rusqlite::Connection::open(vault_path).map_err(|e| DbError::IoError(e.to_string()))?;
 
         // Step 1 — Set the SQLCipher key.
         // MUST be the first statement on a new connection; SQLCipher requires it

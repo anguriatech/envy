@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json)",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks)",
+      "Bash(cargo test:*)",
+      "Bash(.specify/scripts/bash/create-new-feature.sh \"Feature: 004-cli. The CLI layer is the user-facing entry point for Envy, built with clap \\(Derive API\\). It is the only layer that opens the Vault and fetches the master key. Commands: init, migrate, set, get, list \\(alias ls\\), rm \\(alias remove\\), run. Global flag: -e, --env. Error handling with user-friendly messages.\" --json --short-name \"cli-interface\" \"Implement CLI interface\")",
+      "Bash(cargo build:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo fmt:*)"
+    ]
+  }
+}
