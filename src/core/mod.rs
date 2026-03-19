@@ -1,3 +1,16 @@
-// Core/Business Logic layer — orchestrates operations and enforces domain rules.
-// Coordinates between the Cryptography and Database layers.
-// Must not import from the UI/CLI layer.
+//! Core Logic layer — orchestrates secret CRUD, project context resolution,
+//! and environment management.
+//!
+//! # Layer rules (Constitution Principle IV)
+//! - MUST NOT import from `crate::cli`.
+//! - MAY import from `crate::db` and `crate::crypto` only.
+
+mod error;
+mod manifest;
+mod ops;
+
+pub use error::CoreError;
+pub use manifest::{create_manifest, find_manifest, Manifest};
+pub use ops::{
+    delete_secret, get_env_secrets, get_secret, list_secret_keys, set_secret, DEFAULT_ENV,
+};
