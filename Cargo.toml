@@ -3,6 +3,10 @@ name = "envy"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
+description = "A secure, deterministic, and frictionless environment variable manager"
+authors = ["Envy Contributors"]
+keywords = ["cli", "env", "secrets", "security"]
+categories = ["command-line-utilities", "cryptography"]
 
 [dependencies]
 clap      = { version = "4", features = ["derive"] }
