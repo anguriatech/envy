@@ -1,0 +1,15 @@
+[package]
+name = "envy"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[dependencies]
+clap      = { version = "4", features = ["derive"] }
+rusqlite  = { version = "0.31", features = ["bundled-sqlcipher"] }
+uuid      = { version = "1", features = ["v4"] }
+keyring   = "2"
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"

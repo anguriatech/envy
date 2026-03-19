@@ -1,0 +1,10 @@
+/target
+*.rs.bk
+*.rlib
+*.prof*
+.idea/
+.vscode/
+*.log
+.env*
+.DS_Store
+Thumbs.db
