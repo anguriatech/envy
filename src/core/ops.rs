@@ -205,7 +205,13 @@ pub fn get_env_secrets(
     env_name: &str,
 ) -> Result<HashMap<String, Zeroizing<String>>, CoreError> {
     let name = normalize_env(env_name);
-    let env = vault.get_environment_by_name(project_id, &name)?;
+    // A missing environment means no secrets have been set yet — return empty map
+    // rather than propagating NotFound. This makes `envy run` work on a fresh project.
+    let env = match vault.get_environment_by_name(project_id, &name) {
+        Ok(env) => env,
+        Err(DbError::NotFound) => return Ok(HashMap::new()),
+        Err(e) => return Err(CoreError::Db(e)),
+    };
     let records = vault.list_secrets(&env.id)?;
     let mut map = HashMap::new();
     for record in records {
@@ -374,6 +380,26 @@ mod tests {
         assert_eq!(secrets.get("A").map(|v| v.as_str()), Some("1"));
         assert_eq!(secrets.get("B").map(|v| v.as_str()), Some("2"));
         assert_eq!(secrets.get("C").map(|v| v.as_str()), Some("3"));
+    }
+
+    // Bug regression: get_env_secrets on a fresh project (environment never created)
+    // must return Ok(empty map), not Err — `envy run` crashed on first use.
+    #[test]
+    fn get_env_secrets_missing_env_returns_empty() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (vault, pid) = open_test_vault(&tmp);
+
+        // Fresh project — no environments created, no secrets set whatsoever.
+        let result = get_env_secrets(&vault, &[0u8; 32], &pid, "development");
+        assert!(
+            result.is_ok(),
+            "missing environment must return Ok, not Err; got: {:?}",
+            result
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "result must be an empty map for a fresh project"
+        );
     }
 
     // T020

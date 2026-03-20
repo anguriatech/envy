@@ -122,6 +122,23 @@ A developer with an existing `.env` file wants to migrate to Envy without manual
 - **SC-005**: Every error scenario (missing manifest, bad key, vault unavailable) produces a human-readable message and exits with a non-zero code — no panics in any code path.
 - **SC-006**: The `run` command's exit code matches the child process exit code in 100% of tested scenarios, including non-zero exit codes and signal termination.
 
+## Known Bugs & Fixes
+
+### BUG-001: `envy run` crashes on a fresh project with no secrets (fixed)
+
+**Reported**: 2026-03-20
+**Status**: Fixed in `src/core/ops.rs`
+
+**Symptom**: Running `envy run -- <cmd>` immediately after `envy init`, before any `envy set` call, exited with `error: record not found` instead of executing the command.
+
+**Root cause**: `get_env_secrets()` called `vault.get_environment_by_name()` and propagated `DbError::NotFound` via `?`. On a fresh project no environment row exists yet (environments are auto-created lazily by `set_secret`, not by `init`), so the lookup always fails before any secrets have been stored.
+
+**Fix**: Handle `DbError::NotFound` explicitly in `get_env_secrets()` — return `Ok(HashMap::new())` instead of propagating the error. A missing environment is semantically equivalent to an environment with zero secrets for read-only operations.
+
+**Regression test added**: `core::ops::tests::get_env_secrets_missing_env_returns_empty`
+
+---
+
 ## Assumptions
 
 - The master key is retrievable from the OS credential store before any command that needs vault access. Commands that cannot retrieve the key fail fast with a clear message.
