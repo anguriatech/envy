@@ -33,6 +33,10 @@ pub struct Cli {
     pub command: Commands,
 }
 
+/// The set of subcommands recognised by the `envy` binary.
+///
+/// Each variant maps to one `envy <subcommand>` invocation.
+/// `list` also accepts the alias `ls`; `rm` also accepts `remove`.
 #[derive(Subcommand)]
 pub enum Commands {
     /// Initialise Envy in the current directory.

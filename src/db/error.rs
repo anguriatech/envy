@@ -1,3 +1,9 @@
+//! Typed error enum and mapping helpers for the database layer.
+//!
+//! [`DbError`] is the sole error type returned by all `Vault` methods.
+//! Internal rusqlite errors are translated here so that callers above this
+//! layer never need to import or inspect rusqlite types directly.
+
 /// All errors that the database layer can return to the Core layer.
 ///
 /// The Core layer MUST match on these variants and never inspect raw rusqlite errors
