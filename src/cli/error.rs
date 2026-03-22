@@ -43,6 +43,14 @@ pub enum CliError {
     /// `Vault::open` failed (wrong key, corrupted file, or permission error).
     #[error("could not open vault: {0}")]
     VaultOpen(String),
+
+    /// Passphrase terminal prompt failed (IO error, Ctrl-C, or TTY not available).
+    #[error("passphrase input failed: {0}")]
+    PassphraseInput(String),
+
+    /// `decrypt` completed but zero environments could be decrypted.
+    #[error("no environments could be decrypted \u{2014} check your passphrase")]
+    NothingImported,
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +116,8 @@ pub fn cli_exit_code(e: &CliError) -> i32 {
         CliError::ParentProjectExists(_) => 3,
         CliError::ProjectNotInVault => 4,
         CliError::VaultOpen(_) => 4,
+        CliError::PassphraseInput(_) => 2,
+        CliError::NothingImported => 1,
     }
 }
 
@@ -155,6 +165,26 @@ mod tests {
             core_exit_code(&crate::core::CoreError::InvalidSecretKey(String::new())),
             2,
             "InvalidSecretKey must map to exit code 2"
+        );
+    }
+
+    // T006 — contract test from contracts/cli-sync.md
+    #[test]
+    fn passphrase_input_maps_to_exit_code_2() {
+        assert_eq!(
+            cli_exit_code(&CliError::PassphraseInput("some error".into())),
+            2,
+            "PassphraseInput must map to exit code 2"
+        );
+    }
+
+    // T007 — contract test from contracts/cli-sync.md
+    #[test]
+    fn nothing_imported_maps_to_exit_code_1() {
+        assert_eq!(
+            cli_exit_code(&CliError::NothingImported),
+            1,
+            "NothingImported must map to exit code 1"
         );
     }
 }

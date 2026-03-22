@@ -121,11 +121,43 @@ pub enum Commands {
         #[arg(short = 'e', long = "env", value_name = "ENV")]
         env: Option<String>,
     },
+
+    /// Seal the local vault into an encrypted `envy.enc` GitOps artifact (alias: enc).
+    ///
+    /// All environments are sealed by default. Use `-e` to seal a single environment.
+    /// Prompts for a passphrase with confirmation, or reads `ENVY_PASSPHRASE` in CI.
+    #[command(alias = "enc")]
+    Encrypt {
+        /// Seal only this environment (default: all environments in the vault).
+        #[arg(short = 'e', long = "env", value_name = "ENV")]
+        env: Option<String>,
+    },
+
+    /// Unseal `envy.enc` and upsert secrets into the local vault (alias: dec).
+    ///
+    /// Successfully decrypted environments are upserted. Environments that cannot
+    /// be decrypted with the provided passphrase are listed as skipped (not an error).
+    /// Exits non-zero only if zero environments are imported.
+    #[command(alias = "dec")]
+    Decrypt,
 }
 
 // ---------------------------------------------------------------------------
 // Vault path helper
 // ---------------------------------------------------------------------------
+
+/// Returns the canonical path for the `envy.enc` artifact.
+///
+/// `envy.enc` is always co-located with `envy.toml` in the project root,
+/// regardless of which subdirectory the user runs the command from.
+fn artifact_path(manifest_path: &std::path::Path) -> std::path::PathBuf {
+    manifest_path
+        .parent()
+        // Safety: manifest_path is returned by find_manifest, which always
+        // resolves to a file (never "/"). Its parent is always Some.
+        .expect("manifest path must have a parent directory")
+        .join("envy.enc")
+}
 
 /// Returns the path to the encrypted vault file (`~/.envy/vault.db`).
 ///
@@ -176,7 +208,7 @@ pub fn run() -> i32 {
         }
     };
 
-    let (manifest, _) = match crate::core::find_manifest(&cwd) {
+    let (manifest, manifest_path) = match crate::core::find_manifest(&cwd) {
         Ok(m) => m,
         Err(e) => {
             eprintln!("{}", format_core_error(&e));
@@ -269,6 +301,29 @@ pub fn run() -> i32 {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{}", format_cli_error(&e));
+                    cli_exit_code(&e)
+                }
+            }
+        }
+
+        Commands::Encrypt { env } => {
+            let artifact = artifact_path(&manifest_path);
+            let env_filter = env.as_deref();
+            match commands::cmd_encrypt(&vault, &master_key, &project_id, &artifact, env_filter) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    cli_exit_code(&e)
+                }
+            }
+        }
+
+        Commands::Decrypt => {
+            let artifact = artifact_path(&manifest_path);
+            match commands::cmd_decrypt(&vault, &master_key, &project_id, &artifact) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("error: {e}");
                     cli_exit_code(&e)
                 }
             }

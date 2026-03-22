@@ -7,7 +7,9 @@
       "Bash(.specify/scripts/bash/create-new-feature.sh \"Feature: 004-cli. The CLI layer is the user-facing entry point for Envy, built with clap \\(Derive API\\). It is the only layer that opens the Vault and fetches the master key. Commands: init, migrate, set, get, list \\(alias ls\\), rm \\(alias remove\\), run. Global flag: -e, --env. Error handling with user-friendly messages.\" --json --short-name \"cli-interface\" \"Implement CLI interface\")",
       "Bash(cargo build:*)",
       "Bash(cargo clippy:*)",
-      "Bash(cargo fmt:*)"
+      "Bash(cargo fmt:*)",
+      "Bash(.specify/scripts/bash/create-new-feature.sh \"We are starting the specification for 006-cli-sync-commands. The goal of this module is to provide the user interface using clap for the new GitOps synchronization commands. It will parse user input, securely prompt for passphrases \\(or read them from the environment for CI/CD\\), call the core sync functions, and format the output beautifully for the developer.\" --json --short-name \"cli-sync-commands\" \"CLI Sync Commands\")",
+      "WebSearch"
     ]
   }
 }
