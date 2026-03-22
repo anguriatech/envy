@@ -238,6 +238,115 @@ fn cli_run_proxies_exit_code() {
 }
 
 // ---------------------------------------------------------------------------
+// T033 (006) — encrypt and enc alias work
+// ---------------------------------------------------------------------------
+
+/// Verifies that `envy encrypt` and its alias `envy enc` both exit 0 and
+/// produce `envy.enc` when `ENVY_PASSPHRASE` is set in the environment.
+#[test]
+#[ignore = "requires a live OS keyring daemon (Secret Service / Keychain)"]
+fn cli_encrypt_and_enc_alias_work() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    setup_project(tmp.path());
+
+    // Seed one secret so the sealed artifact is non-trivial.
+    envy(&["set", "ENCRYPT_TEST=hello"], tmp.path());
+
+    // Run via full command name.
+    let enc_out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["encrypt"])
+        .env("ENVY_PASSPHRASE", "integration-pass")
+        .current_dir(tmp.path())
+        .output()
+        .expect("failed to spawn envy encrypt");
+
+    assert!(
+        enc_out.status.success(),
+        "envy encrypt must exit 0, stderr: {}",
+        String::from_utf8_lossy(&enc_out.stderr)
+    );
+    assert!(
+        tmp.path().join("envy.enc").exists(),
+        "envy encrypt must create envy.enc"
+    );
+
+    // Remove the artifact and run via alias to confirm the alias is wired correctly.
+    std::fs::remove_file(tmp.path().join("envy.enc")).expect("remove envy.enc");
+
+    let alias_out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["enc"])
+        .env("ENVY_PASSPHRASE", "integration-pass")
+        .current_dir(tmp.path())
+        .output()
+        .expect("failed to spawn envy enc");
+
+    assert!(
+        alias_out.status.success(),
+        "envy enc alias must exit 0, stderr: {}",
+        String::from_utf8_lossy(&alias_out.stderr)
+    );
+    assert!(
+        tmp.path().join("envy.enc").exists(),
+        "envy enc alias must create envy.enc"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// T034 (006) — decrypt and dec alias work
+// ---------------------------------------------------------------------------
+
+/// Verifies that `envy decrypt` and its alias `envy dec` both exit 0 and
+/// upsert secrets into the vault when a valid `envy.enc` is present.
+#[test]
+#[ignore = "requires a live OS keyring daemon (Secret Service / Keychain)"]
+fn cli_decrypt_and_dec_alias_work() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    setup_project(tmp.path());
+
+    // Seed a secret and seal it.
+    envy(&["set", "DECRYPT_TEST=world"], tmp.path());
+    let seal_out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["encrypt"])
+        .env("ENVY_PASSPHRASE", "dec-test-pass")
+        .current_dir(tmp.path())
+        .output()
+        .expect("failed to spawn envy encrypt");
+    assert!(
+        seal_out.status.success(),
+        "encrypt setup must succeed, stderr: {}",
+        String::from_utf8_lossy(&seal_out.stderr)
+    );
+
+    // Run decrypt via full command name.
+    let dec_out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["decrypt"])
+        .env("ENVY_PASSPHRASE", "dec-test-pass")
+        .current_dir(tmp.path())
+        .output()
+        .expect("failed to spawn envy decrypt");
+
+    assert!(
+        dec_out.status.success(),
+        "envy decrypt must exit 0, stderr: {}",
+        String::from_utf8_lossy(&dec_out.stderr)
+    );
+
+    // Confirm the alias is also wired correctly.
+    let alias_out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["dec"])
+        .env("ENVY_PASSPHRASE", "dec-test-pass")
+        .current_dir(tmp.path())
+        .output()
+        .expect("failed to spawn envy dec");
+
+    assert!(
+        alias_out.status.success(),
+        "envy dec alias must exit 0, stderr: {}",
+        String::from_utf8_lossy(&alias_out.stderr)
+    );
+}
+
+// ---------------------------------------------------------------------------
 // T034 — US4: migrate imports .env file
 // ---------------------------------------------------------------------------
 
