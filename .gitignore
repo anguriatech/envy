@@ -18,4 +18,9 @@ Thumbs.db
 # Local environment files (never commit plaintext secrets)
 .env*
 
+# SQLite database files (vault.db lives at ~/.envy/ outside the repo, but belt-and-suspenders)
+*.db
+*.db-shm
+*.db-wal
+
 # Note: .specify/ is intentionally tracked — it contains project specs and templates
