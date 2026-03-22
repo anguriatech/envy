@@ -31,11 +31,14 @@ Create the ultimate tool for environment variable and secret management. It must
 *Goal: Scale from an individual to a small team, solving secret sharing and automated deployments.*
 
 **Key Milestones:**
-- **Secure Export/Import:** Commands to export an encrypted environment payload (`envy export`) to share securely via Slack/email.
-- **GitOps Approach (V1):** Generate repository-specific encrypted files (e.g., `envy.enc`) that *are* safe to commit to Git.
-- **Headless CI/CD Support:** Allow `run` to execute in GitHub Actions/GitLab CI by reading a single master key (`ENVY_MASTER_KEY`) from the runner's environment to decrypt the rest on the fly.
+- **GitOps Approach (V1):** Generate repository-specific encrypted artifacts (`envy.enc`) that *are* safe to commit to Git. The artifact is the source of truth for team collaboration.
+- **`envy encrypt` / `envy enc`:** Seals the local vault into an `envy.enc` artifact. All environments are packed into a single encrypted bundle, ready to be committed to the repository.
+- **`envy decrypt` / `envy dec`:** Unseals an `envy.enc` artifact back into the local vault. This is the command developers run after `git pull` to sync secrets from the repository.
+- **Progressive Disclosure (Environment-Level Keys):** The encryption model supports two operational modes without changing the user-facing commands:
+  - *Startup Mode (Default):* A single shared team key encrypts and decrypts all environments at once. Zero friction for small teams — share one key via your password manager (e.g., Bitwarden) and everyone is fully synced.
+  - *Enterprise Mode (Optional):* Individual environments (e.g., `production`) can be locked with separate, role-specific keys. When a developer runs `envy decrypt` with the dev key, Envy imports `development` and `staging` and **gracefully skips** `production` without throwing an error. Least-privilege access enforced by default.
+- **Headless CI/CD Support:** Allow `run` to execute in GitHub Actions/GitLab CI by reading a key (`ENVY_MASTER_KEY`) from the runner's secret store to decrypt the `envy.enc` artifact on the fly.
 - **Strict Validation:** The CLI must fail-fast before executing the child app if it detects missing mandatory variables for the selected environment.
-- **Project Sync Key:** Establish a single-token architecture. Teams share one master key via their password manager (e.g., Bitwarden) to seamlessly decrypt the `envy.enc` file upon `git pull` via the `envy import` command.
 
 ### Phase 3: The Industry Standard (Years 2 - 3)
 *Goal: Massive adoption, enterprise support, and mature ecosystem.*
@@ -97,6 +100,29 @@ envy run -e staging -- python main.py
 
 # Works with any command after the -- separator
 envy run -e production -- ./server --port 8080
+```
+
+### 4. GitOps & Synchronization (Phase 2 Preview)
+```bash
+# Seals the entire local vault into an encrypted artifact safe to commit to Git.
+# All environments are packed into envy.enc with the shared team key.
+envy encrypt
+envy enc                             # short alias
+
+# Seal only a specific environment into the artifact
+envy enc -e staging
+
+# Unseals envy.enc back into the local vault after a git pull.
+# Startup Mode: one key decrypts all environments at once.
+envy decrypt
+envy dec                             # short alias
+
+# Enterprise Mode: run with the dev key — imports development/staging,
+# gracefully skips production (locked with a different key, no error thrown).
+envy dec --key $DEV_TEAM_KEY
+
+# Headless CI/CD: decrypt in a GitHub Actions runner using a repo secret
+ENVY_MASTER_KEY=${{ secrets.ENVY_KEY }} envy dec && envy run -e production -- ./deploy.sh
 ```
 
 ---
