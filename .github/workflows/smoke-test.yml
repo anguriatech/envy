@@ -1,7 +1,9 @@
 # Smoke Test — Release Binary Guard
 #
-# Triggers: release published (fires after all release assets are uploaded by cargo-dist,
-#            avoiding a race between tag push and installer script availability).
+# Triggers: after the Release workflow completes successfully. cargo-dist creates
+#           releases via GITHUB_TOKEN, which does NOT fire `release: published`
+#           for other workflows (GitHub security restriction). workflow_run avoids
+#           this limitation. workflow_dispatch enables manual runs at any time.
 #
 # Goal: Verify the pre-compiled binary works on clean machines WITHOUT a Rust
 #       toolchain. Uses the official installer scripts — the same ones end users run.
@@ -18,8 +20,10 @@
 name: Smoke Test
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
 
 permissions:
   contents: read
@@ -28,6 +32,7 @@ jobs:
   smoke:
     name: smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     strategy:
       fail-fast: false
       matrix:
