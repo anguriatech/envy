@@ -148,6 +148,22 @@ echo -e "  ${GREEN}✓${RESET} jq:          ${DIM}$(which jq)${RESET}"
 
 ENVY="$(realpath "$ENVY")"
 
+# macOS does not ship GNU coreutils `timeout`; provide a portable fallback.
+if ! command -v timeout &>/dev/null; then
+  timeout() {
+    local secs="$1"; shift
+    "$@" &
+    local pid=$!
+    ( sleep "$secs" && kill -TERM "$pid" 2>/dev/null ) &
+    local watcher=$!
+    wait "$pid" 2>/dev/null
+    local rc=$?
+    kill -TERM "$watcher" 2>/dev/null
+    wait "$watcher" 2>/dev/null
+    return $rc
+  }
+fi
+
 WORKSPACE="$(mktemp -d)"
 trap 'rm -rf "$WORKSPACE"' EXIT
 echo -e "  ${GREEN}✓${RESET} workspace:   ${DIM}${WORKSPACE}${RESET}"
