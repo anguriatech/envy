@@ -19,6 +19,8 @@ name: Smoke Test
 
 on:
   workflow_dispatch: # temporary — enables manual runs without publishing a real release; remove after validation (T036)
+  pull_request: # temporary — enables testing on PR before merge; remove after validation (T036)
+    branches: [master]
   release:
     types: [published]
 
