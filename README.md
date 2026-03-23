@@ -21,18 +21,28 @@ When you need your secrets, `envy run` injects them directly into your process's
 
 ## Installation
 
-### From source (requires Rust 1.85+)
+Envy ships as a native, statically-compiled binary with zero runtime dependencies — no Node.js, Python, or Docker required. The installer auto-detects your CPU architecture and fetches the optimised binary for your machine (Intel, Apple Silicon, ARM64 Linux, or x64 Windows).
+
+### macOS & Linux
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/anguriatech/envy/releases/latest/download/envy-installer.sh | sh
+```
+
+The installer places the binary in your Cargo bin directory and configures your `PATH` automatically. Open a new terminal and `envy` is ready.
+
+### Windows (PowerShell)
+
+```powershell
+irm https://github.com/anguriatech/envy/releases/latest/download/envy-installer.ps1 | iex
+```
+
+### Build from source (requires Rust 1.85+)
 
 ```bash
 git clone https://github.com/anguriatech/envy.git
 cd envy
 cargo install --path .
-```
-
-### From Git directly
-
-```bash
-cargo install --git https://github.com/anguriatech/envy.git
 ```
 
 ---
@@ -63,7 +73,7 @@ Every command at a glance.
 
 ## Workflow 1: Local Development (Single-Player)
 
-The core loop for an individual developer.
+The core loop for an individual developer. After installation, `envy` is on your `PATH` and ready immediately — no shell restart needed.
 
 ```bash
 # 1. Initialise Envy in your project directory
@@ -233,6 +243,8 @@ For automated pipelines, set `ENVY_PASSPHRASE` as a secret in your CI/CD provide
 
 ### GitHub Actions
 
+Use the same installer one-liner to pull the latest pre-built binary — no Rust toolchain required on the runner, and installation takes seconds instead of minutes.
+
 ```yaml
 # .github/workflows/deploy.yml
 jobs:
@@ -242,7 +254,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install envy
-        run: cargo install --git https://github.com/anguriatech/envy.git
+        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/anguriatech/envy/releases/latest/download/envy-installer.sh | sh
 
       - name: Decrypt secrets
         env:
@@ -251,6 +263,17 @@ jobs:
 
       - name: Deploy
         run: envy run -e production -- ./scripts/deploy.sh
+```
+
+### Docker
+
+```dockerfile
+# Install envy during image build — the installer detects the container's architecture automatically
+RUN curl --proto '=https' --tlsv1.2 -LsSf https://github.com/anguriatech/envy/releases/latest/download/envy-installer.sh | sh
+
+# At runtime, pass the passphrase via a secret and decrypt
+ENV ENVY_PASSPHRASE=""
+RUN envy decrypt && envy run -- node server.js
 ```
 
 ### Vercel / Railway / any platform with secret injection
