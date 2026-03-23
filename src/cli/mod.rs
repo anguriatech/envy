@@ -150,13 +150,11 @@ pub enum Commands {
 ///
 /// `envy.enc` is always co-located with `envy.toml` in the project root,
 /// regardless of which subdirectory the user runs the command from.
+///
+/// `manifest_path` is the **directory** returned by [`crate::core::find_manifest`]
+/// (not the file path itself), so joining directly produces the correct sibling path.
 fn artifact_path(manifest_path: &std::path::Path) -> std::path::PathBuf {
-    manifest_path
-        .parent()
-        // Safety: manifest_path is returned by find_manifest, which always
-        // resolves to a file (never "/"). Its parent is always Some.
-        .expect("manifest path must have a parent directory")
-        .join("envy.enc")
+    manifest_path.join("envy.enc")
 }
 
 /// Returns the path to the encrypted vault file (`~/.envy/vault.db`).

@@ -320,7 +320,12 @@ fn resolve_passphrase(prompt: &str, confirm: bool) -> Result<zeroize::Zeroizing<
         if !val.trim().is_empty() {
             return Ok(zeroize::Zeroizing::new(val));
         }
-        // Whitespace-only → fall through (treated as unset).
+        // Env var is explicitly set but contains only whitespace — configuration
+        // error. Fail immediately rather than silently falling back to an
+        // interactive prompt, which would be surprising (and hang) in CI.
+        return Err(CliError::PassphraseInput(
+            "ENVY_PASSPHRASE is set but contains only whitespace".into(),
+        ));
     }
 
     // 2. Interactive terminal prompt.

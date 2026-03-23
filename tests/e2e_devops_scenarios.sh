@@ -8,13 +8,6 @@
 #   3. CI/CD Headless Pipeline (stdin from /dev/null)
 #   4. Malicious Actor — AES-GCM tampering detection
 #
-# NOTE: envy.enc is placed by `artifact_path()` via .parent() on the manifest
-# directory returned by find_manifest. Because find_manifest returns the
-# *directory* containing envy.toml (not the file path itself), the artifact
-# ends up one level above the project dir. This script accounts for that
-# behavior by nesting each project inside a wrapper directory so envy.enc
-# lands in a predictable, per-scenario location.
-#
 # Requirements:
 #   - `envy` binary built or passed via ENVY_BIN env var
 #   - `jq` available (for scenario 2 JSON merge and scenario 4 tampering)
@@ -117,19 +110,16 @@ assert_file_exists() {
 # ---------------------------------------------------------------------------
 # Helper: create an isolated envy project.
 #
-# Because envy places envy.enc in .parent() of the manifest directory,
-# we nest the project dir inside a wrapper dir. This way:
-#   wrapper/project/envy.toml   ← `envy init` runs here
-#   wrapper/envy.enc            ← `envy encrypt` writes here
+# Initialises a fresh envy project in DIR. envy.enc is always written
+# alongside envy.toml in the same directory (the project root).
 #
-# Usage: init_project <wrapper_dir> [project_name]
+# Usage: init_project <dir>
 #   Sets PROJECT_DIR and ARTIFACT_PATH for the caller.
 # ---------------------------------------------------------------------------
 init_project() {
-  local wrapper="$1"
-  local name="${2:-project}"
-  PROJECT_DIR="$wrapper/$name"
-  ARTIFACT_PATH="$wrapper/envy.enc"
+  local dir="$1"
+  PROJECT_DIR="$dir"
+  ARTIFACT_PATH="$dir/envy.enc"
   mkdir -p "$PROJECT_DIR"
   (cd "$PROJECT_DIR" && "$ENVY" init)
 }

@@ -335,6 +335,13 @@ conn.execute(
 This section covers the technical design behind `envy.enc` — the encrypted GitOps
 artifact produced by `envy encrypt` and consumed by `envy decrypt`.
 
+**File placement:** `envy.enc` is always written to the same directory as `envy.toml`
+(the project root), not to the directory from which you invoke the command. This is
+resolved by `artifact_path()` in `src/cli/mod.rs`, which takes the directory returned
+by `find_manifest` and joins `"envy.enc"` directly onto it — no `.parent()` traversal.
+The result is that `envy.enc` lives alongside `envy.toml` and `.git/`, making it a
+natural GitOps artifact: one `git add envy.enc envy.toml` is all that's needed.
+
 ### 7.1 The two keys: master key vs. passphrase
 
 Envy uses two completely distinct cryptographic secrets, each with a different purpose

@@ -9,7 +9,10 @@
       "Bash(cargo clippy:*)",
       "Bash(cargo fmt:*)",
       "Bash(.specify/scripts/bash/create-new-feature.sh \"We are starting the specification for 006-cli-sync-commands. The goal of this module is to provide the user interface using clap for the new GitOps synchronization commands. It will parse user input, securely prompt for passphrases \\(or read them from the environment for CI/CD\\), call the core sync functions, and format the output beautifully for the developer.\" --json --short-name \"cli-sync-commands\" \"CLI Sync Commands\")",
-      "WebSearch"
+      "WebSearch",
+      "Bash(./.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks)",
+      "Bash(cargo check:*)",
+      "Bash(ENVY_BIN=./target/release/envy bash tests/e2e_devops_scenarios.sh)"
     ]
   }
 }
