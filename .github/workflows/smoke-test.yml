@@ -39,7 +39,7 @@ jobs:
       # Checkout (ensures clean working directory; may be needed by helpers)
       # -----------------------------------------------------------------------
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # -----------------------------------------------------------------------
       # Linux: install keyring backend (the binary uses the OS keyring for the
