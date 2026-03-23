@@ -1,0 +1,166 @@
+# Smoke Test — Release Binary Guard
+#
+# Triggers: release published (fires after all release assets are uploaded by cargo-dist,
+#            avoiding a race between tag push and installer script availability).
+#
+# Goal: Verify the pre-compiled binary works on clean machines WITHOUT a Rust
+#       toolchain. Uses the official installer scripts — the same ones end users run.
+#
+# Round-trip tested on all three platforms:
+#   init → set → encrypt → [assert envy.enc in cwd] → rm → decrypt → get
+#
+# The envy.enc placement assertion directly validates the artifact_path bug fix
+# (removal of .parent() in src/cli/mod.rs). If the bug is reintroduced, the check
+# `test -f ./envy.enc` (Unix) / `Test-Path .\envy.enc` (Windows) will fail.
+#
+# ENVY_PASSPHRASE is injected via step-level env: blocks (masked in logs).
+
+name: Smoke Test
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      # -----------------------------------------------------------------------
+      # Checkout (ensures clean working directory; may be needed by helpers)
+      # -----------------------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # -----------------------------------------------------------------------
+      # Linux: install keyring backend (the binary uses the OS keyring for the
+      # vault master key even in the smoke test)
+      # -----------------------------------------------------------------------
+      - name: Install keyring dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y libsecret-1-dev dbus-x11 gnome-keyring
+
+      # -----------------------------------------------------------------------
+      # Install envy via official installer scripts — NO cargo / Rust toolchain.
+      # -----------------------------------------------------------------------
+      - name: Install envy (Linux / macOS)
+        if: runner.os != 'Windows'
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf \
+            https://github.com/anguriatech/envy/releases/latest/download/envy-installer.sh | sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Install envy (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          irm https://github.com/anguriatech/envy/releases/latest/download/envy-installer.ps1 | iex
+          "$env:USERPROFILE\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      # -----------------------------------------------------------------------
+      # Confirm the binary is on PATH and executable.
+      # If this fails (missing DLL, bad PATH, etc.) the error surfaces here
+      # with a clear step name rather than mid-way through the round-trip.
+      # -----------------------------------------------------------------------
+      - name: Verify envy binary
+        run: envy --version
+
+      # -----------------------------------------------------------------------
+      # Full round-trip (Linux)
+      # Wrapped in dbus-run-session for headless OS keyring access.
+      # ENVY_PASSPHRASE injected via step env: (masked in logs).
+      # -----------------------------------------------------------------------
+      - name: Smoke test round-trip (Linux)
+        if: runner.os == 'Linux'
+        env:
+          ENVY_PASSPHRASE: top-secret
+        run: |
+          dbus-run-session -- bash -c '
+            set -euo pipefail
+            echo "" | gnome-keyring-daemon --unlock --daemonize
+
+            WORKDIR=$(mktemp -d)
+            cd "$WORKDIR"
+
+            envy init
+            test -f envy.toml || (echo "ERROR: envy.toml not created" && exit 1)
+
+            envy set DB_PASS=secret123 -e production
+            envy encrypt -e production
+            test -f ./envy.enc || (echo "ERROR: envy.enc not in project dir (artifact_path bug?)" && exit 1)
+
+            envy rm DB_PASS -e production
+            envy decrypt
+
+            RESULT=$(envy get DB_PASS -e production)
+            [ "$RESULT" = "secret123" ] || (echo "ERROR: got [${RESULT}], expected [secret123]" && exit 1)
+            echo "Smoke test PASSED on Linux"
+          '
+
+      # -----------------------------------------------------------------------
+      # Full round-trip (macOS)
+      # Keychain is available natively — no dbus wrapper needed.
+      # -----------------------------------------------------------------------
+      - name: Smoke test round-trip (macOS)
+        if: runner.os == 'macOS'
+        env:
+          ENVY_PASSPHRASE: top-secret
+        run: |
+          set -euo pipefail
+          WORKDIR=$(mktemp -d)
+          cd "$WORKDIR"
+
+          envy init
+          test -f envy.toml || (echo "ERROR: envy.toml not created" && exit 1)
+
+          envy set DB_PASS=secret123 -e production
+          envy encrypt -e production
+          test -f ./envy.enc || (echo "ERROR: envy.enc not in project dir (artifact_path bug?)" && exit 1)
+
+          envy rm DB_PASS -e production
+          envy decrypt
+
+          RESULT=$(envy get DB_PASS -e production)
+          [ "$RESULT" = "secret123" ] || (echo "ERROR: got [${RESULT}], expected [secret123]" && exit 1)
+          echo "Smoke test PASSED on macOS"
+
+      # -----------------------------------------------------------------------
+      # Full round-trip (Windows — PowerShell)
+      # ENVY_PASSPHRASE injected via step env: (masked in logs).
+      # $ErrorActionPreference = 'Stop' ensures any failure propagates as job failure.
+      # -----------------------------------------------------------------------
+      - name: Smoke test round-trip (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          ENVY_PASSPHRASE: top-secret
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $WORKDIR = Join-Path $env:TEMP ([System.IO.Path]::GetRandomFileName())
+          New-Item -ItemType Directory -Path $WORKDIR | Out-Null
+          Set-Location $WORKDIR
+
+          envy init
+          if (-not (Test-Path "envy.toml")) { throw "ERROR: envy.toml not created" }
+
+          envy set DB_PASS=secret123 -e production
+          envy encrypt -e production
+          if (-not (Test-Path ".\envy.enc")) { throw "ERROR: envy.enc not in project dir (artifact_path bug?)" }
+
+          envy rm DB_PASS -e production
+          envy decrypt
+
+          $RESULT = envy get DB_PASS -e production
+          if ($RESULT -ne "secret123") { throw "ERROR: got [$RESULT], expected [secret123]" }
+          Write-Host "Smoke test PASSED on Windows"

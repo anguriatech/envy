@@ -1,0 +1,119 @@
+# CI — Cross-Platform Quality Gate
+#
+# Triggers: every pull_request against master and every push to master.
+# Matrix:   ubuntu-latest, macos-latest, windows-latest (fail-fast: false).
+#
+# Platform-specific setup:
+#   Linux   — installs libsecret-1-dev, dbus-x11, gnome-keyring for OS keyring;
+#             wraps cargo test and E2E script in dbus-run-session for headless keyring.
+#   Windows — installs Perl 5.38 (required to compile vendored OpenSSL in rusqlite).
+#             uses shell: bash for the E2E script step (Git Bash).
+#
+# Linux keyring pattern used below:
+#   dbus-run-session -- bash -c "echo '' | gnome-keyring-daemon --unlock --daemonize && <cmd>"
+
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      # -----------------------------------------------------------------------
+      # Checkout
+      # -----------------------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # -----------------------------------------------------------------------
+      # Rust toolchain
+      # -----------------------------------------------------------------------
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # -----------------------------------------------------------------------
+      # Platform-specific setup
+      # -----------------------------------------------------------------------
+      - name: Install keyring dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y libsecret-1-dev dbus-x11 gnome-keyring
+
+      - name: Set up Perl (Windows — required to compile vendored OpenSSL)
+        if: runner.os == 'Windows'
+        uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: '5.38'
+
+      # -----------------------------------------------------------------------
+      # Quality gate: fmt → clippy → audit
+      # Any failure aborts the job immediately.
+      # -----------------------------------------------------------------------
+      - name: cargo fmt --check
+        run: cargo fmt --check
+
+      - name: cargo clippy -- -D warnings
+        run: cargo clippy -- -D warnings
+
+      - name: cargo audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+
+      # -----------------------------------------------------------------------
+      # Tests
+      # cargo test runs inside dbus-run-session on Linux for headless keyring.
+      # -----------------------------------------------------------------------
+      - name: cargo test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          dbus-run-session -- bash -c "
+            echo '' | gnome-keyring-daemon --unlock --daemonize
+            cargo test
+          "
+
+      - name: cargo test (macOS / Windows)
+        if: runner.os != 'Linux'
+        run: cargo test
+
+      # -----------------------------------------------------------------------
+      # Build debug binary for the E2E script
+      # -----------------------------------------------------------------------
+      - name: cargo build (debug)
+        run: cargo build
+
+      # -----------------------------------------------------------------------
+      # E2E DevOps scenario tests
+      # Linux:   dbus-run-session wrapper for headless keyring.
+      # Windows: shell: bash mandatory (Git Bash interprets the script).
+      # macOS:   direct bash execution.
+      # -----------------------------------------------------------------------
+      - name: E2E scenarios (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          dbus-run-session -- bash -c "
+            echo '' | gnome-keyring-daemon --unlock --daemonize
+            ENVY_BIN=./target/debug/envy bash tests/e2e_devops_scenarios.sh
+          "
+
+      - name: E2E scenarios (macOS / Windows)
+        if: runner.os != 'Linux'
+        shell: bash
+        run: ENVY_BIN=./target/debug/envy bash tests/e2e_devops_scenarios.sh

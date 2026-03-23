@@ -1,8 +1,10 @@
 # envy Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-03-22 (006-cli-sync-commands complete)
+Auto-generated from all feature plans. Last updated: 2026-03-23 (006-cli-sync-commands complete)
 
 ## Active Technologies
+- GitHub Actions YAML; Rust 1.85 (stable) as toolchain installed in CI + `actions/checkout@v4`, `dtolnay/rust-toolchain@stable`, `shogo82148/actions-setup-perl@v1` (007-ci-smoke-workflows)
+- N/A — workflows are stateless; no persistent state between jobs (007-ci-smoke-workflows)
 
 - Rust stable (edition 2024, MSRV 1.85) + `rusqlite` (features: `bundled-sqlcipher`), `uuid` (features: `v4`), `keyring`, `clap` (features: `derive`), `thiserror` (001-vault-db-schema)
 - `aes-gcm` (AES-256-GCM AEAD encryption), `zeroize` (features: `derive`, memory zeroing on drop) (002-crypto-layer)
@@ -26,6 +28,11 @@ src/
 tests/
   sync_artifact.rs — e2e integration tests for envy.enc pipeline
   cli_integration.rs — CLI integration tests (requires OS keyring; ignored in CI)
+.github/
+  workflows/
+    release.yml      — cargo-dist managed release workflow (allow-dirty: ["ci"])
+    ci.yml           — 3-OS matrix CI (ubuntu/macos/windows); quality gate (fmt/clippy/audit) + cargo test + E2E script; Perl on Windows, dbus/gnome-keyring on Linux
+    smoke-test.yml   — post-release smoke test; installs via official installers (no Rust toolchain); full round-trip with envy.enc placement assertion
 ```
 
 ## Commands
@@ -39,13 +46,10 @@ cargo audit
 Rust stable (edition 2024, MSRV 1.85): Follow standard conventions
 
 ## Recent Changes
+- 007-ci-smoke-workflows: Added GitHub Actions YAML; Rust 1.85 (stable) as toolchain installed in CI + `actions/checkout@v4`, `dtolnay/rust-toolchain@stable`, `shogo82148/actions-setup-perl@v1`
 
 - 001-vault-db-schema: Added `rusqlite` (features: `bundled-sqlcipher`), `uuid` (features: `v4`), `keyring`
 - 002-crypto-layer: Added `aes-gcm` (AES-256-GCM AEAD), `zeroize` (features: `derive`); implemented `src/crypto/` with `encrypt`, `decrypt`, `EncryptedSecret`, `get_or_create_master_key`
-- 003-core-logic: Added `toml`, `serde` (features: `derive`); implemented `src/core/` with `find_manifest`, `create_manifest`, `set_secret`, `get_secret`, `list_secret_keys`, `delete_secret`, `get_env_secrets`
-- 004-cli-interface: Added `dirs = "5"`; implemented `src/cli/` with 7 subcommands (`init`, `set`, `get`, `list`/`ls`, `rm`/`remove`, `run`, `migrate`), `CliError` enum, exit-code table (0/1/2/3/4/127), and `pub fn run() -> i32` dispatch
-- 005-gitops-sync-artifact: Added `argon2 = "0.5"`, `serde_json = "1"`, `base64ct = "1"`; implemented `src/crypto/artifact.rs` (Argon2id KDF + AES-256-GCM envelope crypto) and `src/core/sync.rs` (seal/unseal/write/read artifact orchestration); Progressive Disclosure — unseal skips inaccessible envs gracefully
-- 006-cli-sync-commands: Added `dialoguer = "0.11"`; extended `src/cli/` with `encrypt`/`enc` and `decrypt`/`dec` subcommands; `ENVY_PASSPHRASE` env var for CI/CD headless mode; `resolve_passphrase` helper (shared by both handlers); coloured Progressive Disclosure output (green ✓ imported, yellow ⚠ skipped); `PassphraseInput` and `NothingImported` `CliError` variants with exit codes 2 and 1 respectively; `ENV_LOCK` mutex pattern for thread-safe env-var mutation in tests (Rust edition 2024 requires `unsafe {}` for `set_var`/`remove_var`)
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->

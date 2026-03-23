@@ -148,6 +148,22 @@ echo -e "  ${GREEN}✓${RESET} jq:          ${DIM}$(which jq)${RESET}"
 
 ENVY="$(realpath "$ENVY")"
 
+# macOS does not ship GNU coreutils `timeout`; provide a portable fallback.
+if ! command -v timeout &>/dev/null; then
+  timeout() {
+    local secs="$1"; shift
+    "$@" &
+    local pid=$!
+    ( sleep "$secs" && kill -TERM "$pid" 2>/dev/null ) &
+    local watcher=$!
+    wait "$pid" 2>/dev/null
+    local rc=$?
+    kill -TERM "$watcher" 2>/dev/null
+    wait "$watcher" 2>/dev/null
+    return $rc
+  }
+fi
+
 WORKSPACE="$(mktemp -d)"
 trap 'rm -rf "$WORKSPACE"' EXIT
 echo -e "  ${GREEN}✓${RESET} workspace:   ${DIM}${WORKSPACE}${RESET}"
@@ -226,12 +242,19 @@ PROD_ARTIFACT="$(cat "$LEAD_ENC")"
 
 echo -e "${YELLOW}  [Lead] Merging both artifacts (jq) → multi-key envy.enc...${RESET}"
 # Each enc call sealed one env. Merge them into a single artifact.
+# Use temp files instead of process substitution — Git Bash on Windows does
+# not support /proc-based <(...) syntax.
+_DEV_TMP=$(mktemp)
+_PROD_TMP=$(mktemp)
+echo "$DEV_ARTIFACT" > "$_DEV_TMP"
+echo "$PROD_ARTIFACT" > "$_PROD_TMP"
 jq -s '
   {
     version: .[0].version,
     environments: (.[0].environments * .[1].environments)
   }
-' <(echo "$DEV_ARTIFACT") <(echo "$PROD_ARTIFACT") > "$LEAD_ENC"
+' "$_DEV_TMP" "$_PROD_TMP" > "$LEAD_ENC"
+rm -f "$_DEV_TMP" "$_PROD_TMP"
 
 MERGED="$(cat "$LEAD_ENC")"
 assert_contains "Merged artifact has 'development'" '"development"' "$MERGED"
