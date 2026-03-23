@@ -36,18 +36,17 @@ Create the ultimate tool for environment variable and secret management. It must
 - **`envy decrypt` / `envy dec`:** Unseals an `envy.enc` artifact back into the local vault. This is the command developers run after `git pull` to sync secrets from the repository.
 - **Progressive Disclosure (Environment-Level Keys):** The encryption model supports two operational modes without changing the user-facing commands:
   - *Startup Mode (Default):* A single shared team key encrypts and decrypts all environments at once. Zero friction for small teams — share one key via your password manager (e.g., Bitwarden) and everyone is fully synced.
-  - *Enterprise Mode (Optional):* Individual environments (e.g., `production`) can be locked with separate, role-specific keys. When a developer runs `envy decrypt` with the dev key, Envy imports `development` and `staging` and **gracefully skips** `production` without throwing an error. Least-privilege access enforced by default.
+  - *Multi-key Mode (Optional):* Individual environments (e.g., `production`) can be locked with separate keys. When a developer runs `envy decrypt` with the dev key, Envy imports `development` and `staging` and **gracefully skips** `production` without throwing an error. Least-privilege access enforced by default.
 - **Headless CI/CD Support:** Allow `run` to execute in GitHub Actions/GitLab CI by reading a key (`ENVY_MASTER_KEY`) from the runner's secret store to decrypt the `envy.enc` artifact on the fly.
 - **Strict Validation:** The CLI must fail-fast before executing the child app if it detects missing mandatory variables for the selected environment.
 
-### Phase 3: The Industry Standard (Years 2 - 3)
-*Goal: Massive adoption, enterprise support, and mature ecosystem.*
+### Phase 3: Ecosystem & GUI (Years 2 - 3)
+*Goal: Bring Envy to non-terminal users and expand the ecosystem.*
 
 **Key Milestones:**
-- **Access Control (RBAC):** Granular permissions for large teams (e.g., Devs only read `staging`, DevOps read `production`).
-- **Audit & Logs:** Immutable record of secret access for SOC2/ISO compliance.
-- **Cloud Sync (Optional but powerful):** Native plugins to sync with AWS Secrets Manager, HashiCorp Vault, Vercel Envs, acting as a unified interface.
+- **Official VS Code Extension:** Visual secret management — browse environments, set/get/delete secrets, and run commands without touching the terminal.
 - **First-Class Integrations:** Native support or official guides in popular frameworks (Next.js, Vite, NestJS) and infra tools (Terraform, Kubernetes).
+- **Cloud Sync (Optional):** Native plugins to sync with popular secret backends (Vercel Envs, Railway), acting as a unified local interface.
 
 ---
 
@@ -117,9 +116,9 @@ envy enc -e staging
 envy decrypt
 envy dec                             # short alias
 
-# Enterprise Mode: run with the dev key — imports development/staging,
-# gracefully skips production (locked with a different key, no error thrown).
-envy dec --key $DEV_TEAM_KEY
+# Multi-key mode: run with the dev passphrase — imports development/staging,
+# gracefully skips production (locked with a different passphrase, no error thrown).
+ENVY_PASSPHRASE=$DEV_TEAM_KEY envy dec
 
 # Headless CI/CD: decrypt in a GitHub Actions runner using a repo secret
 ENVY_MASTER_KEY=${{ secrets.ENVY_KEY }} envy dec && envy run -e production -- ./deploy.sh
@@ -130,7 +129,7 @@ ENVY_MASTER_KEY=${{ secrets.ENVY_KEY }} envy dec && envy run -e production -- ./
 ## 🧱 Definitive Technology Stack
 - **Language:** **Rust**. Chosen for memory safety, sub-millisecond startup times (crucial for a wrapper), and single-binary distribution.
 - **CLI Framework:** `clap` (derive API).
-- **Local Storage (The Vault):** **SQLite Encrypted (SQLCipher)** integrated via the `rusqlite` crate (using the `bundled-sqlcipher` feature). Ensures ACID transactions, fast lookups, and relational structure for future RBAC/Audit logs.
+- **Local Storage (The Vault):** **SQLite Encrypted (SQLCipher)** integrated via the `rusqlite` crate (using the `bundled-sqlcipher` feature). Ensures ACID transactions, fast lookups, and relational structure for future extensibility.
 - **Master Key Management:** The `keyring` crate to natively interact with macOS Keychain / Windows Credential Manager / Linux Secret Service.
 - **Architecture:** Strictly adhere to the 4-layer modularity defined in the Constitution (UI/CLI -> Core/Business Logic -> Cryptography / Database).
 - **Cryptography (Defense in Depth):** `RustCrypto` ecosystem (AES-256-GCM). Secrets are individually encrypted per row inside the database, ensuring zero plaintext exposure even if the database file is compromised.
