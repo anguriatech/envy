@@ -1,6 +1,6 @@
 # Smoke Test — Release Binary Guard
 #
-# Triggers: release published (fires after all assets are uploaded by cargo-dist,
+# Triggers: release published (fires after all release assets are uploaded by cargo-dist,
 #            avoiding a race between tag push and installer script availability).
 #
 # Goal: Verify the pre-compiled binary works on clean machines WITHOUT a Rust
@@ -18,9 +18,6 @@
 name: Smoke Test
 
 on:
-  workflow_dispatch: # temporary — enables manual runs without publishing a real release; remove after validation (T036)
-  pull_request: # temporary — enables testing on PR before merge; remove after validation (T036)
-    branches: [master]
   release:
     types: [published]
 

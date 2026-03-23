@@ -127,10 +127,10 @@
 **Purpose**: Verify both workflows function end-to-end, confirm the `envy.enc` placement invariant, and clean up.
 
 - [x] T032 [P] Add `workflow_dispatch:` trigger temporarily to `.github/workflows/smoke-test.yml` to enable manual runs without publishing a real release — remove after validation
-- [ ] T033 Trigger the CI workflow on a test branch; confirm all three matrix jobs run in parallel and all pass
-- [ ] T034 Introduce a deliberate `cargo fmt` violation, push to the test branch, confirm CI fails only on the formatting step (not mid-run) and that `fail-fast: false` keeps the other platform jobs running
-- [ ] T035 Manually trigger `smoke-test.yml` against the latest release; confirm each platform job installs `envy` without Rust, completes the round-trip, and the `envy.enc` assertion passes (not placed in parent directory)
-- [ ] T036 Remove the temporary `workflow_dispatch:` trigger from `.github/workflows/smoke-test.yml` added in T032
+- [x] T033 Trigger the CI workflow on a test branch; confirm all three matrix jobs run in parallel and all pass
+- [x] T034 Introduce a deliberate `cargo fmt` violation, push to the test branch, confirm CI fails only on the formatting step (not mid-run) and that `fail-fast: false` keeps the other platform jobs running
+- [x] T035 Manually trigger `smoke-test.yml` against the latest release; confirm each platform job installs `envy` without Rust, completes the round-trip, and the `envy.enc` assertion passes (not placed in parent directory)
+- [x] T036 Remove the temporary `workflow_dispatch:` trigger from `.github/workflows/smoke-test.yml` added in T032
 - [x] T037 [P] Update `CLAUDE.md` to add both new workflows to the project structure section
 
 ---
