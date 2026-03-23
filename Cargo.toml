@@ -12,7 +12,7 @@ repository = "https://github.com/anguriatech/envy"
 
 [dependencies]
 clap      = { version = "4", features = ["derive"] }
-rusqlite  = { version = "0.31", features = ["bundled-sqlcipher"] }
+rusqlite  = { version = "0.31", features = ["bundled-sqlcipher-vendored-openssl"] }
 uuid      = { version = "1", features = ["v4"] }
 keyring   = "2"
 thiserror = "1"
