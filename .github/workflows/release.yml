@@ -139,22 +139,11 @@ jobs:
       - name: Install dependencies
         run: |
           ${{ matrix.packages_install }}
-      - name: Set up OpenSSL (Windows)
+      - name: Set up Perl (Windows — required to compile vendored OpenSSL)
         if: contains(matrix.runner, 'windows')
-        shell: powershell
-        run: |
-          # GitHub Actions windows runners ship with OpenSSL pre-installed.
-          # libsqlite3-sys (bundled-sqlcipher) build script requires OPENSSL_DIR
-          # to be set explicitly — it does not pick up the vendored openssl-sys output.
-          $path = if (Test-Path "C:\Program Files\OpenSSL-Win64") {
-            "C:\Program Files\OpenSSL-Win64"
-          } else {
-            "C:\Program Files\OpenSSL"
-          }
-          "OPENSSL_DIR=$path"    | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "OPENSSL_STATIC=1"     | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "OPENSSL_LIB_DIR=$path\lib\VC\x64\MT" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "OPENSSL_INCLUDE_DIR=$path\include"    | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: '5.38'
       - name: Build artifacts
         run: |
           # Actually do builds and make zips and whatnot
