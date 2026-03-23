@@ -139,6 +139,12 @@ jobs:
       - name: Install dependencies
         run: |
           ${{ matrix.packages_install }}
+      - name: Setup OpenSSL (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $GITHUB_ENV
+          echo "C:\Program Files\OpenSSL\bin" >> $GITHUB_PATH
+        shell: bash
       - name: Build artifacts
         run: |
           # Actually do builds and make zips and whatnot
