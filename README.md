@@ -24,7 +24,7 @@ When you need your secrets, `envy run` injects them directly into your process's
 ### From source (requires Rust 1.85+)
 
 ```bash
-git clone https://github.com/<your-username>/envy.git
+git clone https://github.com/anguriatech/envy.git
 cd envy
 cargo install --path .
 ```
@@ -32,7 +32,7 @@ cargo install --path .
 ### From Git directly
 
 ```bash
-cargo install --git https://github.com/<your-username>/envy.git
+cargo install --git https://github.com/anguriatech/envy.git
 ```
 
 ---
@@ -242,7 +242,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install envy
-        run: cargo install --git https://github.com/<your-username>/envy.git
+        run: cargo install --git https://github.com/anguriatech/envy.git
 
       - name: Decrypt secrets
         env:
