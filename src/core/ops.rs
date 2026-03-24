@@ -159,6 +159,41 @@ pub fn list_secret_keys(
 }
 
 // ---------------------------------------------------------------------------
+// list_secrets_with_values [008-output-formats]
+// ---------------------------------------------------------------------------
+
+/// Decrypts ALL secrets for the given environment and returns them as ordered
+/// `(key, plaintext_value)` pairs.
+///
+/// Pairs are ordered alphabetically by key (consistent with [`list_secret_keys`]).
+/// If the environment has no secrets, returns an empty `Vec`.
+/// Read operations do NOT auto-create the environment.
+///
+/// # Errors
+/// - [`CoreError::Db`] if the environment or project does not exist.
+/// - [`CoreError::Crypto`] if any ciphertext fails GCM authentication.
+pub fn list_secrets_with_values(
+    vault: &Vault,
+    master_key: &[u8; 32],
+    project_id: &ProjectId,
+    env_name: &str,
+) -> Result<Vec<(String, String)>, CoreError> {
+    let name = normalize_env(env_name);
+    let env = vault.get_environment_by_name(project_id, &name)?;
+    // list_secrets returns records ORDER BY key ASC — no additional sort needed.
+    let records = vault.list_secrets(&env.id)?;
+    let mut pairs = Vec::with_capacity(records.len());
+    for record in records {
+        let plaintext_bytes =
+            crate::crypto::decrypt(master_key, &record.value_encrypted, &record.value_nonce)?;
+        let string = String::from_utf8(plaintext_bytes.to_vec())
+            .map_err(|_| CoreError::Crypto(crate::crypto::CryptoError::DecryptionFailed))?;
+        pairs.push((record.key, string));
+    }
+    Ok(pairs)
+}
+
+// ---------------------------------------------------------------------------
 // T029 — delete_secret [US2]
 // ---------------------------------------------------------------------------
 

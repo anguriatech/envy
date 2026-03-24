@@ -417,6 +417,45 @@ GARBAGE3_EXIT=0
 assert_eq "PAYMENT_KEY not in vault after nonce tampering" "1" "$GARBAGE3_EXIT"
 
 # =============================================================================
+# SCENARIO 5 — Machine-Readable Output Formats (--format flag)
+# =============================================================================
+
+section "Scenario 5 — Machine-Readable Output Formats"
+
+echo -e "${YELLOW}  [Dev] Setting up project and seeding secrets...${RESET}"
+init_project "$WORKSPACE/s5-formats"
+FMT_DIR="$PROJECT_DIR"
+
+(cd "$FMT_DIR" && "$ENVY" set "API_KEY=abc123" -e development)
+(cd "$FMT_DIR" && "$ENVY" set "DB_PASS=s3cr3t" -e development)
+
+echo -e "${YELLOW}  [Dev] Testing envy list --format json...${RESET}"
+LIST_JSON=""
+LIST_JSON_EXIT=0
+LIST_JSON="$(cd "$FMT_DIR" && "$ENVY" list -e development --format json 2>&1)" || LIST_JSON_EXIT=$?
+assert_eq "list --format json exits 0" "0" "$LIST_JSON_EXIT"
+assert_contains "list json contains API_KEY" "API_KEY" "$LIST_JSON"
+assert_contains "list json contains abc123" "abc123" "$LIST_JSON"
+assert_contains "list json contains DB_PASS" "DB_PASS" "$LIST_JSON"
+
+echo -e "${YELLOW}  [Dev] Testing envy export -e development --format shell...${RESET}"
+EXPORT_SHELL=""
+EXPORT_SHELL_EXIT=0
+EXPORT_SHELL="$(cd "$FMT_DIR" && "$ENVY" export -e development --format shell 2>&1)" || EXPORT_SHELL_EXIT=$?
+assert_eq "export --format shell exits 0" "0" "$EXPORT_SHELL_EXIT"
+assert_contains "export shell contains export API_KEY" "export API_KEY=" "$EXPORT_SHELL"
+assert_contains "export shell contains abc123" "abc123" "$EXPORT_SHELL"
+assert_contains "export shell contains export DB_PASS" "export DB_PASS=" "$EXPORT_SHELL"
+
+echo -e "${YELLOW}  [Dev] Testing envy export default (dotenv)...${RESET}"
+EXPORT_DOTENV=""
+EXPORT_DOTENV_EXIT=0
+EXPORT_DOTENV="$(cd "$FMT_DIR" && "$ENVY" export -e development 2>&1)" || EXPORT_DOTENV_EXIT=$?
+assert_eq "export default dotenv exits 0" "0" "$EXPORT_DOTENV_EXIT"
+assert_contains "export dotenv contains API_KEY=abc123" "API_KEY=abc123" "$EXPORT_DOTENV"
+assert_contains "export dotenv contains DB_PASS=s3cr3t" "DB_PASS=s3cr3t" "$EXPORT_DOTENV"
+
+# =============================================================================
 # Summary
 # =============================================================================
 
