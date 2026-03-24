@@ -157,7 +157,12 @@ pub enum Commands {
     /// Use `--format json` for machine-readable output.
     Export {
         /// Target environment (default: development).
-        #[arg(short = 'e', long = "env", value_name = "ENV", default_value = "development")]
+        #[arg(
+            short = 'e',
+            long = "env",
+            value_name = "ENV",
+            default_value = "development"
+        )]
         env: String,
     },
 }
