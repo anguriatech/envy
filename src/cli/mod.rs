@@ -165,6 +165,15 @@ pub enum Commands {
         )]
         env: String,
     },
+
+    /// Show sync status of all vault environments (alias: st).
+    ///
+    /// Displays a table of environments with secret count, last-modified time,
+    /// and sync state relative to `envy.enc`. Read-only — never prompts for a
+    /// passphrase or decrypts secret values. Use `--format json` for
+    /// machine-readable output suitable for CI/CD pipelines.
+    #[command(alias = "st")]
+    Status,
 }
 
 // ---------------------------------------------------------------------------
@@ -356,6 +365,17 @@ pub fn run() -> i32 {
 
         Commands::Export { env } => {
             match commands::cmd_export(&vault, &master_key, &project_id, &env, cli.format) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("{}", format_cli_error(&e));
+                    cli_exit_code(&e)
+                }
+            }
+        }
+
+        Commands::Status => {
+            let artifact = artifact_path(&manifest_path);
+            match commands::cmd_status(&vault, &project_id, &artifact, cli.format) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{}", format_cli_error(&e));

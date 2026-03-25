@@ -12,12 +12,14 @@ mod error;
 mod projects;
 mod schema;
 mod secrets;
+mod sync_markers;
 
 pub use environments::Environment;
 pub use error::DbError;
 use error::map_rusqlite_error;
 pub use projects::Project;
 pub use secrets::SecretRecord;
+pub use sync_markers::EnvironmentStatus;
 
 use std::path::Path;
 

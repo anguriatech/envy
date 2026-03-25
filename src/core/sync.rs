@@ -236,7 +236,28 @@ pub fn seal_env(
         .map_err(|e| SyncError::VaultError(e.to_string()))?;
     let secrets: BTreeMap<String, Zeroizing<String>> = secrets_map.into_iter().collect();
     let payload = ArtifactPayload { secrets };
-    Ok(seal_envelope(passphrase, &payload)?)
+    let envelope = seal_envelope(passphrase, &payload)?;
+
+    // Update the sync marker so `envy status` reports InSync immediately after
+    // a successful encrypt (spec FR-008; Constitution Principle: marker is only
+    // written if the seal itself succeeds).
+    let env = vault
+        .get_environment_by_name(project_id, env_name)
+        .map_err(|e| SyncError::VaultError(e.to_string()))?;
+
+    // SAFETY: `duration_since(UNIX_EPOCH)` can only fail if the system clock is
+    // set before 1970-01-01 — a hardware/OS misconfiguration we cannot recover from.
+    // Defaulting to 0 avoids a panic while still recording a marker row.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    vault
+        .upsert_sync_marker(&env.id, now)
+        .map_err(|e| SyncError::VaultError(e.to_string()))?;
+
+    Ok(envelope)
 }
 
 // ---------------------------------------------------------------------------
@@ -515,6 +536,32 @@ mod tests {
         assert!(
             !check_envelope_passphrase("pass-B", "development", &correct_envelope),
             "wrong passphrase must return false"
+        );
+    }
+
+    // T034 — seal_env writes sync marker after successful seal (FR-008)
+    #[test]
+    fn seal_env_writes_sync_marker() {
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_KEY, &pid, "development", "API_KEY", "secret")
+            .expect("set_secret must succeed");
+
+        seal_env(&vault, &TEST_KEY, &pid, "development", "test-passphrase")
+            .expect("seal_env must succeed");
+
+        let statuses = vault.environment_status(&pid).expect("environment_status");
+        let dev = statuses
+            .iter()
+            .find(|s| s.name == "development")
+            .expect("development must be present");
+        assert!(
+            dev.sealed_at.is_some(),
+            "sealed_at must be Some after seal_env"
+        );
+        assert!(
+            dev.sealed_at.unwrap() > 0,
+            "sealed_at must be a positive Unix timestamp"
         );
     }
 }
