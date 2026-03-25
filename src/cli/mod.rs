@@ -14,7 +14,7 @@ mod commands;
 mod error;
 pub mod format;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use format::OutputFormat;
 
 pub use error::{CliError, cli_exit_code, core_exit_code, format_cli_error, format_core_error};
@@ -42,7 +42,6 @@ pub struct Cli {
 /// The set of subcommands recognised by the `envy` binary.
 ///
 /// Each variant maps to one `envy <subcommand>` invocation.
-/// `list` also accepts the alias `ls`; `rm` also accepts `remove`.
 #[derive(Subcommand)]
 pub enum Commands {
     /// Initialise Envy in the current directory.
@@ -84,7 +83,7 @@ pub enum Commands {
     /// **Note**: While the default `table` format only prints key names, using
     /// `--format json`, `--format dotenv`, or `--format shell` will decrypt and
     /// reveal the actual secret values in the output.
-    #[command(alias = "ls")]
+    #[command(visible_alias = "ls")]
     List {
         /// Target environment (default: development).
         #[arg(short = 'e', long = "env", value_name = "ENV")]
@@ -92,7 +91,7 @@ pub enum Commands {
     },
 
     /// Delete a secret.
-    #[command(alias = "remove")]
+    #[command(visible_aliases = ["remove", "unset"])]
     Rm {
         /// The secret key name to delete.
         key: String,
@@ -131,23 +130,23 @@ pub enum Commands {
         env: Option<String>,
     },
 
-    /// Seal the local vault into an encrypted `envy.enc` GitOps artifact (alias: enc).
+    /// Seal the local vault into an encrypted `envy.enc` GitOps artifact.
     ///
     /// All environments are sealed by default. Use `-e` to seal a single environment.
     /// Prompts for a passphrase with confirmation, or reads `ENVY_PASSPHRASE` in CI.
-    #[command(alias = "enc")]
+    #[command(visible_alias = "enc")]
     Encrypt {
         /// Seal only this environment (default: all environments in the vault).
         #[arg(short = 'e', long = "env", value_name = "ENV")]
         env: Option<String>,
     },
 
-    /// Unseal `envy.enc` and upsert secrets into the local vault (alias: dec).
+    /// Unseal `envy.enc` and upsert secrets into the local vault.
     ///
     /// Successfully decrypted environments are upserted. Environments that cannot
     /// be decrypted with the provided passphrase are listed as skipped (not an error).
     /// Exits non-zero only if zero environments are imported.
-    #[command(alias = "dec")]
+    #[command(visible_alias = "dec")]
     Decrypt,
 
     /// Print all secrets for an environment to stdout.
@@ -166,14 +165,29 @@ pub enum Commands {
         env: String,
     },
 
-    /// Show sync status of all vault environments (alias: st).
+    /// Show sync status of all vault environments.
     ///
     /// Displays a table of environments with secret count, last-modified time,
     /// and sync state relative to `envy.enc`. Read-only — never prompts for a
     /// passphrase or decrypts secret values. Use `--format json` for
     /// machine-readable output suitable for CI/CD pipelines.
-    #[command(alias = "st")]
+    #[command(visible_alias = "st")]
     Status,
+
+    /// Generate shell completion scripts.
+    ///
+    /// Prints the completion script for the given shell to stdout.
+    /// Source the output in your shell profile to enable tab-completion.
+    ///
+    /// Examples:
+    ///   envy completions bash >> ~/.bash_completion
+    ///   envy completions zsh > ~/.zfunc/_envy
+    ///   envy completions fish > ~/.config/fish/completions/envy.fish
+    #[command(hide = true)]
+    Completions {
+        /// Target shell.
+        shell: clap_complete::Shell,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +232,12 @@ pub fn run() -> i32 {
     use clap::Parser as _;
 
     let cli = Cli::parse();
+
+    // --- Completions: no vault or manifest needed. ---
+    if let Commands::Completions { shell } = cli.command {
+        clap_complete::generate(shell, &mut Cli::command(), "envy", &mut std::io::stdout());
+        return 0;
+    }
 
     // --- Init is special: it manages its own vault lifecycle. ---
     if let Commands::Init = &cli.command {
@@ -383,5 +403,7 @@ pub fn run() -> i32 {
                 }
             }
         }
+
+        Commands::Completions { .. } => unreachable!("Completions is handled above"),
     }
 }
