@@ -51,6 +51,14 @@ pub enum CliError {
     /// `decrypt` completed but zero environments could be decrypted.
     #[error("no environments could be decrypted \u{2014} check your passphrase")]
     NothingImported,
+
+    /// A core-layer error surfaced through a CLI command that returns `CliError`.
+    #[error("{0}")]
+    Core(#[from] crate::core::CoreError),
+
+    /// Output formatting or write failure.
+    #[error("output error: {0}")]
+    Output(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +126,8 @@ pub fn cli_exit_code(e: &CliError) -> i32 {
         CliError::VaultOpen(_) => 4,
         CliError::PassphraseInput(_) => 2,
         CliError::NothingImported => 1,
+        CliError::Core(e) => core_exit_code(e),
+        CliError::Output(_) => 1,
     }
 }
 

@@ -13,7 +13,8 @@ pub mod sync;
 pub use error::CoreError;
 pub use manifest::{Manifest, create_manifest, find_manifest};
 pub use ops::{
-    DEFAULT_ENV, delete_secret, get_env_secrets, get_secret, list_secret_keys, set_secret,
+    DEFAULT_ENV, delete_secret, get_env_secrets, get_secret, list_secret_keys,
+    list_secrets_with_values, set_secret,
 };
 pub use sync::{
     SyncError, UnsealResult, read_artifact, seal_artifact, unseal_artifact, write_artifact,

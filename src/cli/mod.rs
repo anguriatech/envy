@@ -12,8 +12,10 @@
 
 mod commands;
 mod error;
+pub mod format;
 
 use clap::{Parser, Subcommand};
+use format::OutputFormat;
 
 pub use error::{CliError, cli_exit_code, core_exit_code, format_cli_error, format_core_error};
 
@@ -31,6 +33,10 @@ pub use error::{CliError, cli_exit_code, core_exit_code, format_cli_error, forma
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
+
+    /// Output format for read commands (default: table).
+    #[arg(long, short = 'f', global = true, default_value = "table")]
+    pub format: OutputFormat,
 }
 
 /// The set of subcommands recognised by the `envy` binary.
@@ -71,10 +77,13 @@ pub enum Commands {
         env: Option<String>,
     },
 
-    /// List all secret key names for the environment (never values).
+    /// List all secret key names for the environment.
     ///
-    /// Keys are printed one per line in alphabetical order. Secret values are
-    /// never included in the output.
+    /// Keys are printed one per line in alphabetical order.
+    ///
+    /// **Note**: While the default `table` format only prints key names, using
+    /// `--format json`, `--format dotenv`, or `--format shell` will decrypt and
+    /// reveal the actual secret values in the output.
     #[command(alias = "ls")]
     List {
         /// Target environment (default: development).
@@ -140,6 +149,22 @@ pub enum Commands {
     /// Exits non-zero only if zero environments are imported.
     #[command(alias = "dec")]
     Decrypt,
+
+    /// Print all secrets for an environment to stdout.
+    ///
+    /// Default output format is `dotenv` (`KEY=value` one per line), suitable for
+    /// generating `.env` files or sourcing with `eval $(envy export --format shell)`.
+    /// Use `--format json` for machine-readable output.
+    Export {
+        /// Target environment (default: development).
+        #[arg(
+            short = 'e',
+            long = "env",
+            value_name = "ENV",
+            default_value = "development"
+        )]
+        env: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -257,22 +282,24 @@ pub fn run() -> i32 {
 
         Commands::Get { key, env } => {
             let env = env.as_deref().unwrap_or("");
-            match commands::cmd_get(&vault, &master_key, &project_id, env, &key) {
+            match commands::cmd_get(&vault, &master_key, &project_id, env, &key, cli.format) {
                 Ok(()) => 0,
                 Err(e) => {
-                    eprintln!("{}", format_core_error(&e));
-                    core_exit_code(&e)
+                    if cli.format == OutputFormat::Table {
+                        eprintln!("{}", format_cli_error(&e));
+                    }
+                    cli_exit_code(&e)
                 }
             }
         }
 
         Commands::List { env } => {
             let env = env.as_deref().unwrap_or("");
-            match commands::cmd_list(&vault, &project_id, env) {
+            match commands::cmd_list(&vault, &master_key, &project_id, env, cli.format) {
                 Ok(()) => 0,
                 Err(e) => {
-                    eprintln!("{}", format_core_error(&e));
-                    core_exit_code(&e)
+                    eprintln!("{}", format_cli_error(&e));
+                    cli_exit_code(&e)
                 }
             }
         }
@@ -322,6 +349,16 @@ pub fn run() -> i32 {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("error: {e}");
+                    cli_exit_code(&e)
+                }
+            }
+        }
+
+        Commands::Export { env } => {
+            match commands::cmd_export(&vault, &master_key, &project_id, &env, cli.format) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("{}", format_cli_error(&e));
                     cli_exit_code(&e)
                 }
             }

@@ -11,6 +11,7 @@
 use std::path::Path;
 
 use crate::cli::error::CliError;
+use crate::cli::format::{FormatError, OutputData, OutputFormat, print_output};
 use crate::core::CoreError;
 use crate::db::{ProjectId, Vault};
 
@@ -125,40 +126,137 @@ pub(super) fn cmd_set(
 
 /// Prints the decrypted value of a secret to stdout.
 ///
-/// **stdout contract**: outputs exactly `{value}\n` — no labels, no leading
-/// whitespace. Shell pipelines (`envy get KEY | xargs ...`) depend on this.
+/// **stdout contract (table format)**: outputs exactly `{value}\n` — no labels,
+/// no leading whitespace. Shell pipelines (`envy get KEY | xargs ...`) depend on
+/// this (FR-011, SC-003).
+///
+/// For non-table formats, delegates to the presentation layer.
+/// On key-not-found: for table format exits with `CoreError::Db(NotFound)`; for
+/// other formats writes a machine-readable error payload then returns the same error.
 pub(super) fn cmd_get(
     vault: &Vault,
     master_key: &[u8; 32],
     project_id: &ProjectId,
     env: &str,
     key: &str,
-) -> Result<(), CoreError> {
-    let value = crate::core::get_secret(vault, master_key, project_id, env, key)?;
-    // `println!` appends exactly one newline — satisfies the stdout contract.
-    println!("{}", *value);
-    Ok(())
+    format: OutputFormat,
+) -> Result<(), CliError> {
+    use std::io::stdout;
+
+    match crate::core::get_secret(vault, master_key, project_id, env, key) {
+        Ok(value) => {
+            if format == OutputFormat::Table {
+                // Preserve exact existing behaviour (SC-003).
+                println!("{}", *value);
+            } else {
+                print_output(
+                    format,
+                    OutputData::SecretItem {
+                        key,
+                        value: value.as_str(),
+                    },
+                    &mut stdout(),
+                )
+                .map_err(|e: FormatError| CliError::Output(e.to_string()))?;
+            }
+            Ok(())
+        }
+        Err(e) => {
+            if format != OutputFormat::Table {
+                // Emit a machine-readable error before returning the error code.
+                let _ = print_output(format, OutputData::NotFound { key }, &mut stdout());
+            }
+            Err(CliError::Core(e))
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
 // T019 — cmd_list
 // ---------------------------------------------------------------------------
 
-/// Lists all secret key names for the environment (never their values).
+/// Lists all secret key names (or key-value pairs) for the environment.
 ///
-/// Keys are printed one per line in alphabetical order (sorted by Core).
-/// If the environment has no secrets, an informational message is printed
-/// to stderr (not stdout) so that scripts consuming stdout are unaffected.
-pub(super) fn cmd_list(vault: &Vault, project_id: &ProjectId, env: &str) -> Result<(), CoreError> {
-    let keys = crate::core::list_secret_keys(vault, project_id, env)?;
-    if keys.is_empty() {
-        eprintln!("(no secrets in {})", display_env(env));
-    } else {
-        for k in &keys {
-            println!("{k}");
+/// For `Table` format, only keys are printed one per line — identical to the
+/// previous behaviour (SC-003). For other formats, values are decrypted and
+/// passed to the presentation layer.
+///
+/// If the environment has no secrets and format is `Table`, an informational
+/// message is printed to stderr so that scripts consuming stdout are unaffected.
+pub(super) fn cmd_list(
+    vault: &Vault,
+    master_key: &[u8; 32],
+    project_id: &ProjectId,
+    env: &str,
+    format: OutputFormat,
+) -> Result<(), CliError> {
+    use crate::cli::format::OutputFormat;
+    use std::io::stdout;
+
+    if format == OutputFormat::Table {
+        // Table path: keys only, no values decrypted — backward-compatible (FR-011, SC-003).
+        let keys = crate::core::list_secret_keys(vault, project_id, env).map_err(CliError::Core)?;
+        if keys.is_empty() {
+            eprintln!("(no secrets in {})", display_env(env));
+        } else {
+            for k in &keys {
+                println!("{k}");
+            }
         }
+        return Ok(());
     }
-    Ok(())
+
+    // Non-table paths: decrypt values and delegate to the presentation layer.
+    let secrets = crate::core::list_secrets_with_values(vault, master_key, project_id, env)
+        .map_err(CliError::Core)?;
+    print_output(
+        format,
+        OutputData::SecretList {
+            env: display_env(env),
+            secrets: &secrets,
+        },
+        &mut stdout(),
+    )
+    .map_err(|e: FormatError| CliError::Output(e.to_string()))
+}
+
+// ---------------------------------------------------------------------------
+// cmd_export [008-output-formats]
+// ---------------------------------------------------------------------------
+
+/// Prints all secrets for the given environment to stdout.
+///
+/// Default format is `Dotenv` — `Table` is coerced to `Dotenv` because the
+/// `export` command has no meaningful table representation (FR-007).
+/// Use `--format json` or `--format shell` for other machine-readable output.
+pub(super) fn cmd_export(
+    vault: &Vault,
+    master_key: &[u8; 32],
+    project_id: &ProjectId,
+    env: &str,
+    format: OutputFormat,
+) -> Result<(), CliError> {
+    use std::io::stdout;
+
+    // Table → Dotenv coercion: `export` has no table representation (FR-007).
+    let effective = if format == OutputFormat::Table {
+        OutputFormat::Dotenv
+    } else {
+        format
+    };
+
+    let secrets = crate::core::list_secrets_with_values(vault, master_key, project_id, env)
+        .map_err(CliError::Core)?;
+
+    print_output(
+        effective,
+        OutputData::ExportList {
+            env: display_env(env),
+            secrets: &secrets,
+        },
+        &mut stdout(),
+    )
+    .map_err(|e: FormatError| CliError::Output(e.to_string()))
 }
 
 // ---------------------------------------------------------------------------

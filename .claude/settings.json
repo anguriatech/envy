@@ -16,7 +16,8 @@
       "Bash(.specify/scripts/bash/create-new-feature.sh \"Create a technical specification for Envy''s CI/CD infrastructure consisting of two distinct GitHub Actions workflows: a CI workflow \\(ci.yml\\) that runs on every PR and push to master across ubuntu-latest, macos-latest, and windows-latest, including quality checks and E2E tests; and a smoke-test workflow \\(smoke-test.yml\\) that runs after a release is published to verify the pre-compiled binary works on clean machines without Rust.\" --json --short-name \"ci-smoke-workflows\")",
       "Bash(.specify/scripts/bash/create-new-feature.sh \"CI and smoke test workflows\" --json --short-name \"ci-smoke-workflows\")",
       "Bash(.specify/scripts/bash/setup-plan.sh --json)",
-      "Bash(.specify/scripts/bash/update-agent-context.sh claude:*)"
+      "Bash(.specify/scripts/bash/update-agent-context.sh claude:*)",
+      "Bash(.specify/scripts/bash/create-new-feature.sh \"Adding machine-readable output formats via a global --format flag\" --json --short-name \"output-formats\")"
     ]
   }
 }
