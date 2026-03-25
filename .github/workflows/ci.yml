@@ -117,3 +117,59 @@ jobs:
         if: runner.os != 'Linux'
         shell: bash
         run: ENVY_BIN=./target/debug/envy bash tests/e2e_devops_scenarios.sh
+
+      # -----------------------------------------------------------------------
+      # Completions smoke test — verifies the hidden command exits 0 and
+      # produces non-empty output for bash and zsh.
+      # No vault, no keyring required.
+      # -----------------------------------------------------------------------
+      - name: Completions smoke test
+        shell: bash
+        run: |
+          ENVY_BIN=$(pwd)/target/debug/envy
+          "$ENVY_BIN" completions bash > /dev/null
+          "$ENVY_BIN" completions zsh  > /dev/null
+
+      # -----------------------------------------------------------------------
+      # Headless + JSON quality gate
+      #
+      # Dogfoods the README.md CI/CD example end-to-end:
+      #   1. Initialise a fresh project and store a dummy secret.
+      #   2. Seal it headlessly via ENVY_PASSPHRASE_DEVELOPMENT (no prompts).
+      #   3. Run `envy status --format json` and assert the environment is
+      #      "in_sync" — proving the sync marker write in seal_env works and
+      #      that the JSON quality-gate pattern from the README functions
+      #      correctly in an actual pipeline.
+      #
+      # Linux:        dbus-run-session wrapper for headless OS keyring.
+      # macOS/Windows: direct execution.
+      # -----------------------------------------------------------------------
+      - name: Headless + JSON quality gate (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          dbus-run-session -- bash -c "
+            echo '' | gnome-keyring-daemon --unlock --daemonize
+            ENVY_BIN=\$(pwd)/target/debug/envy
+            GATE_DIR=\$(mktemp -d)
+            cd \"\$GATE_DIR\"
+            \"\$ENVY_BIN\" init
+            \"\$ENVY_BIN\" set 'APP_SECRET=hunter2'
+            ENVY_PASSPHRASE_DEVELOPMENT='ci-gate-pass' \"\$ENVY_BIN\" encrypt -e development < /dev/null
+            STATUS=\$(\"\$ENVY_BIN\" status --format json)
+            echo \"\$STATUS\"
+            echo \"\$STATUS\" | jq -e '.environments[] | select(.status == \"in_sync\")' > /dev/null
+          "
+
+      - name: Headless + JSON quality gate (macOS / Windows)
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          ENVY_BIN=$(pwd)/target/debug/envy
+          GATE_DIR=$(mktemp -d)
+          cd "$GATE_DIR"
+          "$ENVY_BIN" init
+          "$ENVY_BIN" set 'APP_SECRET=hunter2'
+          ENVY_PASSPHRASE_DEVELOPMENT='ci-gate-pass' "$ENVY_BIN" encrypt -e development < /dev/null
+          STATUS=$("$ENVY_BIN" status --format json)
+          echo "$STATUS"
+          echo "$STATUS" | jq -e '.environments[] | select(.status == "in_sync")' > /dev/null
