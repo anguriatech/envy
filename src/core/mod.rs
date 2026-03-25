@@ -17,5 +17,6 @@ pub use ops::{
     list_secrets_with_values, set_secret,
 };
 pub use sync::{
-    SyncError, UnsealResult, read_artifact, seal_artifact, unseal_artifact, write_artifact,
+    SyncError, UnsealResult, check_envelope_passphrase, new_empty_artifact, read_artifact,
+    seal_artifact, seal_env, unseal_artifact, unseal_env, write_artifact, write_artifact_atomic,
 };
