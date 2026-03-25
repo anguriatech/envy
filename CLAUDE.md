@@ -1,12 +1,13 @@
 # envy Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-03-24 (006-cli-sync-commands complete)
+Auto-generated from all feature plans. Last updated: 2026-03-25 (006-cli-sync-commands complete)
 
 ## Active Technologies
 - GitHub Actions YAML; Rust 1.85 (stable) as toolchain installed in CI + `actions/checkout@v4`, `dtolnay/rust-toolchain@stable`, `shogo82148/actions-setup-perl@v1` (007-ci-smoke-workflows)
 - N/A — workflows are stateless; no persistent state between jobs (007-ci-smoke-workflows)
 - Rust stable (edition 2024, MSRV 1.85) + `clap` (derive API, `ValueEnum`), `serde` + `serde_json` (already present), `thiserror` (008-output-formats)
 - SQLite via `rusqlite` with `bundled-sqlcipher-vendored-openssl` (existing vault, read-only for this feature) (008-output-formats)
+- Rust stable (edition 2024, MSRV 1.85) + `rand = "0.8"` (new direct dep; already in `Cargo.lock` transitively), `dialoguer = "0.11"` (already present; `MultiSelect` + `Confirm` used), `serde_json` (already present) (009-multi-env-encrypt)
 
 - Rust stable (edition 2024, MSRV 1.85) + `rusqlite` (features: `bundled-sqlcipher`), `uuid` (features: `v4`), `keyring`, `clap` (features: `derive`), `thiserror` (001-vault-db-schema)
 - `aes-gcm` (AES-256-GCM AEAD encryption), `zeroize` (features: `derive`, memory zeroing on drop) (002-crypto-layer)
@@ -48,10 +49,10 @@ cargo audit
 Rust stable (edition 2024, MSRV 1.85): Follow standard conventions
 
 ## Recent Changes
+- 009-multi-env-encrypt: Added Rust stable (edition 2024, MSRV 1.85) + `rand = "0.8"` (new direct dep; already in `Cargo.lock` transitively), `dialoguer = "0.11"` (already present; `MultiSelect` + `Confirm` used), `serde_json` (already present)
 - 008-output-formats: Added Rust stable (edition 2024, MSRV 1.85) + `clap` (derive API, `ValueEnum`), `serde` + `serde_json` (already present), `thiserror`
 - 007-ci-smoke-workflows: Added GitHub Actions YAML; Rust 1.85 (stable) as toolchain installed in CI + `actions/checkout@v4`, `dtolnay/rust-toolchain@stable`, `shogo82148/actions-setup-perl@v1`
 
-- 001-vault-db-schema: Added `rusqlite` (features: `bundled-sqlcipher`), `uuid` (features: `v4`), `keyring`
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->

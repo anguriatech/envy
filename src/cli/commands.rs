@@ -397,8 +397,181 @@ pub(super) fn cmd_migrate(
 }
 
 // ---------------------------------------------------------------------------
-// cmd_encrypt / cmd_decrypt — stubs (Phase 1); full impl in Phase 2–3
+// cmd_encrypt / cmd_decrypt
 // ---------------------------------------------------------------------------
+
+/// Resolves the passphrase for a specific environment.
+///
+/// Priority (FR-001, FR-002, FR-012):
+/// 1. `ENVY_PASSPHRASE_<UPPER_ENV>` — per-environment env var (highest).
+/// 2. `ENVY_PASSPHRASE` — global fallback env var.
+/// 3. Interactive terminal prompt via `dialoguer` — when no env var is set.
+///    Returns `Ok(None)` if there is no env var AND no TTY (e.g. CI pipe).
+///
+/// Whitespace-only env vars are treated as configuration errors (Err), not as
+/// "not set" — to prevent silent fallback to an interactive prompt in CI.
+///
+/// The `confirm` flag enables double-entry confirmation (new environments).
+/// The `suggested` parameter is reserved for Phase 7 Diceware wiring (T028).
+fn resolve_passphrase_for_env(
+    env_name: &str,
+    confirm: bool,
+    _suggested: Option<&str>,
+) -> Result<Option<zeroize::Zeroizing<String>>, CliError> {
+    // Tier 1: per-environment env var.
+    let var_name = format!(
+        "ENVY_PASSPHRASE_{}",
+        env_name.to_uppercase().replace('-', "_")
+    );
+    if let Ok(val) = std::env::var(&var_name) {
+        if !val.trim().is_empty() {
+            return Ok(Some(zeroize::Zeroizing::new(val)));
+        }
+        return Err(CliError::PassphraseInput(format!(
+            "{var_name} is set but contains only whitespace"
+        )));
+    }
+
+    // Tier 2: global env var.
+    if let Ok(val) = std::env::var("ENVY_PASSPHRASE") {
+        if !val.trim().is_empty() {
+            return Ok(Some(zeroize::Zeroizing::new(val)));
+        }
+        return Err(CliError::PassphraseInput(
+            "ENVY_PASSPHRASE is set but contains only whitespace".into(),
+        ));
+    }
+
+    // Tier 3: interactive prompt — Ok(None) when no TTY.
+    let theme = dialoguer::theme::ColorfulTheme::default();
+
+    // T028: Diceware suggestion path — empty Enter accepts suggestion.
+    if let Some(suggested) = _suggested {
+        let prompt = format!("Passphrase for '{env_name}' (press Enter to accept: {suggested})");
+        let raw: String = match dialoguer::Password::with_theme(&theme)
+            .with_prompt(&prompt)
+            .allow_empty_password(true)
+            .interact()
+        {
+            Ok(v) => v,
+            Err(_) => return Ok(None), // No TTY.
+        };
+        if raw.is_empty() {
+            // User accepted the Diceware suggestion.
+            return Ok(Some(zeroize::Zeroizing::new(suggested.to_string())));
+        }
+        // User typed their own passphrase.
+        if raw.trim().is_empty() {
+            return Err(CliError::PassphraseInput(
+                "passphrase must not be empty".into(),
+            ));
+        }
+        if confirm {
+            let confirmed: String = match dialoguer::Password::with_theme(&theme)
+                .with_prompt(format!("Confirm passphrase for '{env_name}'"))
+                .interact()
+            {
+                Ok(v) => v,
+                Err(_) => return Ok(None),
+            };
+            if confirmed != raw {
+                return Err(CliError::PassphraseInput(
+                    "Passphrases do not match.".into(),
+                ));
+            }
+        }
+        return Ok(Some(zeroize::Zeroizing::new(raw)));
+    }
+
+    // No suggestion: standard prompt.
+    let prompt = format!("Passphrase for '{env_name}'");
+    let result: Result<String, _> = if confirm {
+        dialoguer::Password::with_theme(&theme)
+            .with_prompt(&prompt)
+            .with_confirmation("Confirm passphrase", "Passphrases do not match.")
+            .interact()
+    } else {
+        dialoguer::Password::with_theme(&theme)
+            .with_prompt(&prompt)
+            .interact()
+    };
+
+    match result {
+        Ok(raw) => {
+            if raw.trim().is_empty() {
+                return Err(CliError::PassphraseInput(
+                    "passphrase must not be empty".into(),
+                ));
+            }
+            Ok(Some(zeroize::Zeroizing::new(raw)))
+        }
+        Err(_) => Ok(None), // No TTY or I/O error → skip this env.
+    }
+}
+
+/// Returns `true` when any non-whitespace per-env or global passphrase env var
+/// is set for at least one of the given environment names (FR-004).
+///
+/// Used by `cmd_encrypt` to decide whether to run headless (no interactive
+/// prompts) or interactive (MultiSelect + Diceware — Phase 5).
+fn is_headless_mode(env_names: &[String]) -> bool {
+    if let Ok(val) = std::env::var("ENVY_PASSPHRASE") {
+        if !val.trim().is_empty() {
+            return true;
+        }
+    }
+    for env_name in env_names {
+        let var_name = format!(
+            "ENVY_PASSPHRASE_{}",
+            env_name.to_uppercase().replace('-', "_")
+        );
+        if let Ok(val) = std::env::var(&var_name) {
+            if !val.trim().is_empty() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Prints a high-visibility "SAVE THIS NOW" banner to stderr with `passphrase`.
+///
+/// Called when the user accepts a Diceware suggestion — the banner is shown
+/// exactly once. Passphrase is printed in bold yellow so it stands out, and
+/// the message reminds the user it will not be shown again (FR-010, SC-005).
+fn print_diceware_banner(passphrase: &str) {
+    eprintln!(
+        "\n  {}\n\n    {}\n\n  {}\n",
+        dialoguer::console::style("╔══════════════════════════════════════╗")
+            .yellow()
+            .bold(),
+        dialoguer::console::style(passphrase).yellow().bold(),
+        dialoguer::console::style("SAVE THIS PASSPHRASE NOW. You will not be shown it again.")
+            .yellow()
+            .bold(),
+    );
+}
+
+/// Prompts the user to confirm a passphrase key-rotation for `env_name`.
+///
+/// Displays a high-visibility warning, then uses `Confirm` with `default(false)`
+/// so pressing Enter or typing 'N' aborts the rotation (FR-008, SC-004).
+///
+/// Returns `Ok(true)` if the user explicitly confirms, `Ok(false)` to abort.
+fn confirm_key_rotation(env_name: &str) -> Result<bool, CliError> {
+    eprintln!(
+        "\n  {} Passphrase does not match existing data for '{env_name}'.\n  \
+         Continuing will ROTATE the key. Data sealed with the old passphrase\n  \
+         will not be recoverable without it.\n",
+        dialoguer::console::style("WARNING:").yellow().bold()
+    );
+    let theme = dialoguer::theme::ColorfulTheme::default();
+    dialoguer::Confirm::with_theme(&theme)
+        .with_prompt(format!("Rotate the key for '{env_name}'?"))
+        .default(false)
+        .interact()
+        .map_err(|e| CliError::PassphraseInput(e.to_string()))
+}
 
 /// Resolves the passphrase for encrypt/decrypt operations.
 ///
@@ -450,14 +623,25 @@ fn resolve_passphrase(prompt: &str, confirm: bool) -> Result<zeroize::Zeroizing<
     Ok(zeroize::Zeroizing::new(raw))
 }
 
-/// Seals the vault into `envy.enc` at `artifact_path`.
+/// Seals vault environments into `envy.enc` at `artifact_path`.
 ///
-/// Passphrase is resolved from `ENVY_PASSPHRASE` env var (headless CI) or via
-/// an interactive double-entry terminal prompt.
+/// **Headless path** (FR-001–FR-006, FR-012, FR-013): active when any
+/// `ENVY_PASSPHRASE_<ENV>` or `ENVY_PASSPHRASE` env var is non-whitespace.
+/// Iterates all (or `env_filter`) environments; resolves per-env passphrase;
+/// merges into the existing artifact; writes atomically.
+///
+/// **Interactive path** (FR-007, FR-009, FR-011): presents a `MultiSelect`
+/// of all vault environments; resolves a passphrase for each selected env via
+/// `resolve_passphrase_for_env` (single-entry; double-entry for new envs is
+/// handled in Phase 7 T028). Diceware suggestion is wired in Phase 7 T027.
+///
+/// Both paths share the same smart-merge and atomic-write logic (FR-005,
+/// FR-006, FR-013).
 ///
 /// # Errors
-/// - [`CliError::PassphraseInput`] if the passphrase is empty or prompt fails.
-/// - [`CliError::VaultOpen`] on vault read or file write failure.
+/// - [`CliError::PassphraseInput`] if any passphrase env var is whitespace-only
+///   or the interactive prompt fails.
+/// - [`CliError::VaultOpen`] on vault read, crypto, or file write failure.
 pub(super) fn cmd_encrypt(
     vault: &Vault,
     master_key: &[u8; 32],
@@ -465,33 +649,149 @@ pub(super) fn cmd_encrypt(
     artifact_path: &std::path::Path,
     env_filter: Option<&str>,
 ) -> Result<(), CliError> {
-    // Step 1 — Resolve passphrase with double-entry confirmation.
-    let passphrase = resolve_passphrase("Enter passphrase", true)?;
+    // Step 0 — Validate passphrase env vars before any vault I/O.
+    // Whitespace-only values are a configuration error (FR-012): surface them
+    // immediately rather than falling through to the no-envs guard or MultiSelect.
+    if let Ok(val) = std::env::var("ENVY_PASSPHRASE") {
+        if val.trim().is_empty() {
+            return Err(CliError::PassphraseInput(
+                "ENVY_PASSPHRASE is set but contains only whitespace".into(),
+            ));
+        }
+    }
 
-    // Step 2 — Build the env slice argument.
-    let env_vec: Vec<&str> = env_filter.into_iter().collect();
-    let envs: Option<&[&str]> = if env_vec.is_empty() {
-        None
-    } else {
-        Some(&env_vec)
+    // Step 1 — List all environments in the vault.
+    let all_envs: Vec<String> = vault
+        .list_environments(project_id)
+        .map_err(|e| CliError::VaultOpen(e.to_string()))?
+        .into_iter()
+        .map(|e| e.name)
+        .collect();
+
+    // T021: guard — no environments in vault at all.
+    if all_envs.is_empty() {
+        println!("No environments found. Use 'envy set' to add secrets first.");
+        return Ok(());
+    }
+
+    // Step 2 — Apply env_filter to narrow the candidate list.
+    let selected_envs: Vec<String> = match env_filter {
+        Some(f) => vec![f.to_string()],
+        None => all_envs,
     };
 
-    // Step 3 — Seal the vault into a SyncArtifact.
-    let artifact =
-        crate::core::seal_artifact(vault, master_key, project_id, passphrase.as_ref(), envs)
-            .map_err(|e| CliError::VaultOpen(e.to_string()))?;
+    // Step 3 — Determine which envs to actually seal (and track headless mode).
+    let headless = is_headless_mode(&selected_envs);
+    let envs_to_seal: Vec<String> = if headless {
+        // Headless: use the full selected list (env vars drive passphrase resolution).
+        selected_envs
+    } else if env_filter.is_some() {
+        // Interactive but env_filter provided: seal just that one env.
+        selected_envs
+    } else {
+        // T020: Interactive + no filter → MultiSelect.
+        let theme = dialoguer::theme::ColorfulTheme::default();
+        let indices = dialoguer::MultiSelect::with_theme(&theme)
+            .with_prompt("Select environments to encrypt")
+            .items(&selected_envs)
+            .interact()
+            .map_err(|e| CliError::PassphraseInput(e.to_string()))?;
+        if indices.is_empty() {
+            println!("Nothing to encrypt.");
+            return Ok(());
+        }
+        indices
+            .into_iter()
+            .map(|i| selected_envs[i].clone())
+            .collect()
+    };
 
-    // Step 4 — Write the artifact to disk (overwrites any existing envy.enc).
-    crate::core::write_artifact(&artifact, artifact_path)
+    // Step 4 — Load existing artifact as smart-merge base (FR-005, FR-013).
+    let mut artifact = match crate::core::read_artifact(artifact_path) {
+        Ok(a) => a,
+        Err(crate::core::SyncError::FileNotFound(_)) => crate::core::new_empty_artifact(),
+        Err(e) => return Err(CliError::VaultOpen(e.to_string())),
+    };
+
+    // Step 5 — For each env: resolve passphrase (T022/T028), pre-flight check
+    //           (T024), Diceware banner (T027), seal, merge.
+    let mut sealed_envs: Vec<String> = Vec::new();
+    for env_name in &envs_to_seal {
+        // T027: generate a Diceware suggestion for NEW environments in interactive mode.
+        // Existing envs already have a passphrase — no suggestion needed.
+        let is_new_env = !artifact.environments.contains_key(env_name);
+        let diceware_suggestion: Option<String> = if !headless && is_new_env {
+            Some(crate::crypto::suggest_passphrase(4))
+        } else {
+            None
+        };
+
+        // F1: Skip environments with 0 secrets — sealing an empty envelope is
+        // almost always a user mistake (e.g., running encrypt before `envy set`).
+        let secret_keys =
+            crate::core::list_secret_keys(vault, project_id, env_name).unwrap_or_default(); // treat DB errors as empty (safe skip)
+        if secret_keys.is_empty() {
+            eprintln!(
+                "  {}  environment '{}' has 0 secrets, skipping",
+                dialoguer::console::style("\u{26a0}").yellow(),
+                env_name
+            );
+            continue;
+        }
+
+        // T022/T028: resolve passphrase; double-entry for new envs.
+        let passphrase = match resolve_passphrase_for_env(
+            env_name,
+            !headless && is_new_env, // confirm = true for new envs in interactive mode
+            diceware_suggestion.as_deref(),
+        )? {
+            Some(p) => p,
+            None => continue, // no env var and no TTY → skip this env
+        };
+
+        // T024: Pre-flight key-rotation check (interactive path only, FR-008, SC-004).
+        // Headless mode bypasses this check — CI operators know their passphrases.
+        if !headless {
+            if let Some(existing_envelope) = artifact.environments.get(env_name) {
+                if !crate::core::check_envelope_passphrase(
+                    passphrase.as_ref(),
+                    env_name,
+                    existing_envelope,
+                ) {
+                    // Passphrase mismatch → warn and require explicit confirmation.
+                    if !confirm_key_rotation(env_name)? {
+                        continue; // User said No (or pressed Enter) → skip this env.
+                    }
+                    // User explicitly confirmed → fall through to seal.
+                }
+            }
+        }
+
+        // T027: if the user accepted the Diceware suggestion, show the "SAVE THIS NOW" banner.
+        if let Some(ref suggestion) = diceware_suggestion {
+            if *passphrase == *suggestion {
+                print_diceware_banner(suggestion);
+            }
+        }
+
+        let envelope =
+            crate::core::seal_env(vault, master_key, project_id, env_name, passphrase.as_ref())
+                .map_err(|e| CliError::VaultOpen(e.to_string()))?;
+        artifact.environments.insert(env_name.clone(), envelope);
+        sealed_envs.push(env_name.clone());
+    }
+
+    // Step 6 — Atomic write (write-to-tmp + rename, FR-006).
+    crate::core::write_artifact_atomic(&artifact, artifact_path)
         .map_err(|e| CliError::VaultOpen(e.to_string()))?;
 
-    // Step 5 — Print success output.
+    // Step 7 — Success output (T029: lists only updated envs in this run).
     println!(
         "Sealed {} environment(s) \u{2192} {}",
-        artifact.environments.len(),
+        sealed_envs.len(),
         artifact_path.display()
     );
-    for env_name in artifact.environments.keys() {
+    for env_name in &sealed_envs {
         println!(
             "  {}  {}",
             dialoguer::console::style("\u{2713}").green(),
@@ -529,20 +829,51 @@ pub(super) fn cmd_decrypt(
         other => CliError::VaultOpen(other.to_string()),
     })?;
 
-    // Step 2 — Resolve passphrase (single-entry, no confirmation for decrypt).
-    let passphrase = resolve_passphrase("Enter passphrase", false)?;
+    // Step 2 — Determine headless vs interactive (QA-F2: per-env passphrase parity).
+    let env_names: Vec<String> = artifact.environments.keys().cloned().collect();
+    let (imported, skipped) = if is_headless_mode(&env_names) {
+        // ── Headless path: per-env passphrase resolution (QA-F2) ──
+        let mut imp: std::collections::BTreeMap<
+            String,
+            std::collections::BTreeMap<String, zeroize::Zeroizing<String>>,
+        > = std::collections::BTreeMap::new();
+        let mut skp: Vec<String> = Vec::new();
 
-    // Step 3 — Unseal: decrypt each environment independently (Progressive Disclosure).
-    let result = crate::core::unseal_artifact(&artifact, passphrase.as_ref())
-        .map_err(|e| CliError::VaultOpen(e.to_string()))?;
+        for env_name in &env_names {
+            let passphrase = match resolve_passphrase_for_env(env_name, false, None)? {
+                Some(p) => p,
+                None => {
+                    skp.push(env_name.clone());
+                    continue;
+                }
+            };
+            match crate::core::unseal_env(&artifact, env_name, passphrase.as_ref())
+                .map_err(|e| CliError::VaultOpen(e.to_string()))?
+            {
+                Some(secrets) => {
+                    imp.insert(env_name.clone(), secrets);
+                }
+                None => {
+                    skp.push(env_name.clone());
+                }
+            }
+        }
+        (imp, skp)
+    } else {
+        // ── Interactive path: single passphrase (Progressive Disclosure) ──
+        let passphrase = resolve_passphrase("Enter passphrase", false)?;
+        let result = crate::core::unseal_artifact(&artifact, passphrase.as_ref())
+            .map_err(|e| CliError::VaultOpen(e.to_string()))?;
+        (result.imported, result.skipped)
+    };
 
-    // Step 4 — If nothing was imported, surface NothingImported (exit 1).
-    if result.imported.is_empty() {
+    // Step 3 — If nothing was imported, surface NothingImported (exit 1).
+    if imported.is_empty() {
         return Err(CliError::NothingImported);
     }
 
-    // Step 5 — Upsert all imported secrets; individual failures are warnings, not errors.
-    for (env_name, secrets) in &result.imported {
+    // Step 4 — Upsert all imported secrets; individual failures are warnings, not errors.
+    for (env_name, secrets) in &imported {
         for (key, value) in secrets {
             if let Err(e) = crate::core::set_secret(
                 vault,
@@ -557,14 +888,11 @@ pub(super) fn cmd_decrypt(
         }
     }
 
-    // Step 6 — Print success header.
-    println!(
-        "Imported {} environment(s) from envy.enc",
-        result.imported.len()
-    );
+    // Step 5 — Print success header.
+    println!("Imported {} environment(s) from envy.enc", imported.len());
 
-    // Step 7 — Progressive Disclosure: green ✓ for imported, yellow ⚠ dim for skipped.
-    for (env_name, secrets) in &result.imported {
+    // Step 6 — Progressive Disclosure: green ✓ for imported, yellow ⚠ dim for skipped.
+    for (env_name, secrets) in &imported {
         println!(
             "  {}  {} ({} secret(s) upserted)",
             dialoguer::console::style("\u{2713}").green(),
@@ -572,7 +900,7 @@ pub(super) fn cmd_decrypt(
             secrets.len()
         );
     }
-    for env_name in &result.skipped {
+    for env_name in &skipped {
         println!(
             "  {}  {} skipped \u{2014} different passphrase or key",
             dialoguer::console::style("\u{26a0}").yellow().dim(),
@@ -821,11 +1149,205 @@ mod tests {
         );
     }
 
+    // T015 (new) — per-env passphrase var seals only that environment
+    #[test]
+    fn encrypt_uses_per_env_passphrase_var() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_MASTER_KEY, &pid, "development", "KEY", "val")
+            .expect("set_secret must succeed");
+
+        let artifact_path = tmp.path().join("envy.enc");
+        // Set only the per-env var — no global ENVY_PASSPHRASE.
+        // SAFETY: single-threaded access serialised by ENV_LOCK above.
+        unsafe { std::env::set_var("ENVY_PASSPHRASE_DEVELOPMENT", "dev-specific-pass") };
+        let result = cmd_encrypt(&vault, &TEST_MASTER_KEY, &pid, &artifact_path, None);
+        unsafe { std::env::remove_var("ENVY_PASSPHRASE_DEVELOPMENT") };
+
+        result.expect("cmd_encrypt must succeed with ENVY_PASSPHRASE_DEVELOPMENT");
+        assert!(artifact_path.exists(), "envy.enc must be written");
+        let raw = std::fs::read_to_string(&artifact_path).expect("must read envy.enc");
+        assert!(
+            raw.contains("\"development\""),
+            "envy.enc must contain development"
+        );
+    }
+
+    // T016 — smart merge: pre-existing envelope is preserved byte-for-byte
+    #[test]
+    fn encrypt_smart_merge_preserves_existing_envelopes() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+
+        // Set up both environments in the vault.
+        crate::core::set_secret(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            "development",
+            "DEV_KEY",
+            "dev",
+        )
+        .expect("set_secret must succeed");
+        crate::core::set_secret(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            "production",
+            "PROD_KEY",
+            "prod",
+        )
+        .expect("set_secret must succeed");
+
+        // Pre-populate envy.enc with only the production envelope.
+        let prod_artifact = crate::core::seal_artifact(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            "prod-pass",
+            Some(&["production"]),
+        )
+        .expect("seal_artifact must succeed");
+        let artifact_path = tmp.path().join("envy.enc");
+        crate::core::write_artifact(&prod_artifact, &artifact_path)
+            .expect("write_artifact must succeed");
+
+        // Capture the production envelope bytes before the merge.
+        let raw_before = std::fs::read_to_string(&artifact_path).expect("must read before");
+        let before: serde_json::Value =
+            serde_json::from_str(&raw_before).expect("must parse before");
+
+        // Now encrypt only development (smart merge should keep production unchanged).
+        // SAFETY: single-threaded access serialised by ENV_LOCK above.
+        unsafe { std::env::set_var("ENVY_PASSPHRASE_DEVELOPMENT", "dev-pass") };
+        let result = cmd_encrypt(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            &artifact_path,
+            Some("development"),
+        );
+        unsafe { std::env::remove_var("ENVY_PASSPHRASE_DEVELOPMENT") };
+
+        result.expect("smart merge must succeed");
+
+        let raw_after = std::fs::read_to_string(&artifact_path).expect("must read after");
+        let after: serde_json::Value = serde_json::from_str(&raw_after).expect("must parse after");
+
+        assert!(
+            raw_after.contains("\"development\""),
+            "development must be present after merge"
+        );
+        assert!(
+            raw_after.contains("\"production\""),
+            "production must be preserved after merge"
+        );
+        // Production envelope must be byte-identical — not re-sealed.
+        assert_eq!(
+            before["environments"]["production"], after["environments"]["production"],
+            "production envelope must be byte-identical after smart merge"
+        );
+    }
+
+    // T018 — malformed envy.enc aborts without overwriting (FR-013)
+    #[test]
+    fn encrypt_aborts_on_malformed_envy_enc() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_MASTER_KEY, &pid, "development", "KEY", "val")
+            .expect("set_secret must succeed");
+
+        let artifact_path = tmp.path().join("envy.enc");
+        // Write malformed JSON — cmd_encrypt must not silently overwrite it.
+        std::fs::write(&artifact_path, b"{{not valid json}}")
+            .expect("write stale content must succeed");
+
+        // SAFETY: single-threaded access serialised by ENV_LOCK above.
+        unsafe { std::env::set_var("ENVY_PASSPHRASE", "pass") };
+        let result = cmd_encrypt(&vault, &TEST_MASTER_KEY, &pid, &artifact_path, None);
+        unsafe { std::env::remove_var("ENVY_PASSPHRASE") };
+
+        assert!(
+            result.is_err(),
+            "malformed envy.enc must cause an error (not a silent overwrite)"
+        );
+        // The original malformed file must still be there (not overwritten).
+        let remaining = std::fs::read(&artifact_path).expect("file must still exist");
+        assert_eq!(
+            remaining, b"{{not valid json}}",
+            "malformed envy.enc must not be overwritten on error"
+        );
+    }
+
+    // T019 — stale .tmp file is cleaned up after a successful encrypt (FR-006)
+    #[test]
+    fn encrypt_removes_stale_tmp_file_on_success() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_MASTER_KEY, &pid, "development", "KEY", "val")
+            .expect("set_secret must succeed");
+
+        let artifact_path = tmp.path().join("envy.enc");
+        let tmp_path = tmp.path().join("envy.enc.tmp");
+
+        // Simulate a previous crash that left a stale .tmp file.
+        std::fs::write(&tmp_path, b"stale-tmp-content").expect("write stale .tmp must succeed");
+
+        // SAFETY: single-threaded access serialised by ENV_LOCK above.
+        unsafe { std::env::set_var("ENVY_PASSPHRASE", "pass") };
+        let result = cmd_encrypt(&vault, &TEST_MASTER_KEY, &pid, &artifact_path, None);
+        unsafe { std::env::remove_var("ENVY_PASSPHRASE") };
+
+        result.expect("cmd_encrypt must succeed even with a stale .tmp file");
+
+        // The stale .tmp must be gone after the atomic write.
+        assert!(
+            !tmp_path.exists(),
+            "envy.enc.tmp must be removed after success"
+        );
+
+        // The final envy.enc must be valid and contain the expected environment.
+        let raw = std::fs::read_to_string(&artifact_path).expect("must read envy.enc");
+        assert!(
+            raw.contains("\"development\""),
+            "envy.enc must contain development after success"
+        );
+    }
+
+    // T025 — pre-flight check returns false for wrong passphrase (FR-008)
+    #[test]
+    fn check_envelope_passphrase_returns_false_for_rotation_detection() {
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_MASTER_KEY, &pid, "development", "K", "v")
+            .expect("set_secret must succeed");
+
+        // Seal with pass-A.
+        let artifact = crate::core::seal_artifact(&vault, &TEST_MASTER_KEY, &pid, "pass-A", None)
+            .expect("seal_artifact must succeed");
+        let envelope = artifact
+            .environments
+            .get("development")
+            .expect("development must be present");
+
+        // Wrong passphrase → false (rotation warning path would trigger).
+        assert!(
+            !crate::core::check_envelope_passphrase("pass-B", "development", envelope),
+            "wrong passphrase must return false (key-rotation warning path)"
+        );
+        // Correct passphrase → true.
+        assert!(
+            crate::core::check_envelope_passphrase("pass-A", "development", envelope),
+            "correct passphrase must return true"
+        );
+    }
+
     // -----------------------------------------------------------------------
     // Phase 3 — cmd_decrypt tests (T021–T026)
-    //
-    // TDD: written FIRST. Tests compile but panic (todo!) until cmd_decrypt
-    // is implemented in T028–T030.
     //
     // Same ENV_LOCK discipline: all tests that mutate ENVY_PASSPHRASE
     // acquire ENV_LOCK before setting it and release on drop.
@@ -1012,6 +1534,85 @@ mod tests {
             4,
             "malformed envy.enc must map to exit code 4, got: {:?}",
             err
+        );
+    }
+
+    // T035 [F1] — empty env is skipped with a warning; envy.enc must not contain it
+    #[test]
+    fn encrypt_skips_empty_env_with_warning() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+
+        // Create an environment with zero secrets — F1 guard must skip it.
+        vault
+            .create_environment(&pid, "empty-env")
+            .expect("create_environment must succeed");
+
+        let artifact_path = tmp.path().join("envy.enc");
+        // SAFETY: single-threaded access serialised by ENV_LOCK above.
+        unsafe { std::env::set_var("ENVY_PASSPHRASE", "any-pass") };
+        let result = cmd_encrypt(&vault, &TEST_MASTER_KEY, &pid, &artifact_path, None);
+        unsafe { std::env::remove_var("ENVY_PASSPHRASE") };
+
+        result.expect("cmd_encrypt must return Ok(()) even when all envs are skipped");
+
+        // envy.enc is written (atomic write always runs) but must not contain the empty env.
+        let raw = std::fs::read_to_string(&artifact_path).expect("envy.enc must exist");
+        assert!(
+            !raw.contains("\"empty-env\""),
+            "empty env must not appear in envy.enc after F1 skip"
+        );
+    }
+
+    // T038 [F2] — cmd_decrypt uses ENVY_PASSPHRASE_<ENV> for per-env decryption
+    #[test]
+    fn decrypt_uses_per_env_passphrase_var() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+
+        crate::core::set_secret(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            "development",
+            "DEV_SECRET",
+            "dev-value",
+        )
+        .expect("set_secret must succeed");
+
+        // Seal the artifact using cmd_encrypt with a per-env var so we know the passphrase.
+        let artifact_path = tmp.path().join("envy.enc");
+        unsafe { std::env::set_var("ENVY_PASSPHRASE_DEVELOPMENT", "dev-pass") };
+        cmd_encrypt(&vault, &TEST_MASTER_KEY, &pid, &artifact_path, None)
+            .expect("cmd_encrypt must succeed");
+        unsafe { std::env::remove_var("ENVY_PASSPHRASE_DEVELOPMENT") };
+
+        // Delete the secret from the vault so we can verify it gets re-imported.
+        let env_id = vault
+            .get_environment_by_name(&pid, "development")
+            .expect("env must exist")
+            .id;
+        vault
+            .delete_secret(&env_id, "DEV_SECRET")
+            .expect("delete_secret must succeed");
+
+        // Now run cmd_decrypt with only the per-env var set (no global ENVY_PASSPHRASE).
+        // SAFETY: single-threaded access serialised by ENV_LOCK above.
+        unsafe { std::env::set_var("ENVY_PASSPHRASE_DEVELOPMENT", "dev-pass") };
+        let result = cmd_decrypt(&vault, &TEST_MASTER_KEY, &pid, &artifact_path);
+        unsafe { std::env::remove_var("ENVY_PASSPHRASE_DEVELOPMENT") };
+
+        result.expect("cmd_decrypt must succeed with ENVY_PASSPHRASE_DEVELOPMENT");
+
+        let val =
+            crate::core::get_secret(&vault, &TEST_MASTER_KEY, &pid, "development", "DEV_SECRET")
+                .expect("DEV_SECRET must be re-imported after decrypt");
+        assert_eq!(
+            val.as_str(),
+            "dev-value",
+            "re-imported value must match original"
         );
     }
 

@@ -2,11 +2,13 @@
 # =============================================================================
 # e2e_devops_scenarios.sh — Multi-user DevOps integration tests for Envy
 #
-# Simulates four real-world scenarios using isolated temp directories:
+# Simulates real-world scenarios using isolated temp directories:
 #   1. Standard Team Sync (Dev A → Dev B)
 #   2. Progressive Disclosure (dev-pass / prod-pass, junior reads dev only)
 #   3. CI/CD Headless Pipeline (stdin from /dev/null)
 #   4. Malicious Actor — AES-GCM tampering detection
+#   5. Machine-Readable Output Formats (--format flag)
+#   6. Multi-Env Headless Encryption with Smart Merge (FR-001, FR-005, SC-002)
 #
 # Requirements:
 #   - `envy` binary built or passed via ENVY_BIN env var
@@ -454,6 +456,75 @@ EXPORT_DOTENV="$(cd "$FMT_DIR" && "$ENVY" export -e development 2>&1)" || EXPORT
 assert_eq "export default dotenv exits 0" "0" "$EXPORT_DOTENV_EXIT"
 assert_contains "export dotenv contains API_KEY=abc123" "API_KEY=abc123" "$EXPORT_DOTENV"
 assert_contains "export dotenv contains DB_PASS=s3cr3t" "DB_PASS=s3cr3t" "$EXPORT_DOTENV"
+
+# =============================================================================
+# SCENARIO 6 — Multi-Env Headless Encryption with Smart Merge (T033)
+#
+# Verifies:
+#   - ENVY_PASSPHRASE_DEVELOPMENT seals only development (FR-001)
+#   - ENVY_PASSPHRASE_PRODUCTION seals only production (FR-002)
+#   - Both envs coexist in envy.enc after two separate headless runs (FR-005)
+#   - A pre-existing third envelope (staging) is preserved unchanged (SC-002)
+# =============================================================================
+
+section "Scenario 6 — Multi-Env Headless Encryption with Smart Merge"
+
+echo -e "${YELLOW}  [S6] Setting up project with three environments...${RESET}"
+init_project "$WORKSPACE/s6-multienv"
+S6_DIR="$PROJECT_DIR"
+S6_ENC="$ARTIFACT_PATH"
+
+# Seed all three environments.
+(cd "$S6_DIR" && "$ENVY" set "DEPLOY_TOKEN=ghp_s6dev" -e development)
+(cd "$S6_DIR" && "$ENVY" set "DB_URL=postgres://prod" -e production)
+(cd "$S6_DIR" && "$ENVY" set "STAGING_KEY=stg123" -e staging)
+
+# Step 1: seal only staging first (gives us a pre-existing third envelope).
+echo -e "${YELLOW}  [S6] Step 1: Sealing staging as pre-existing envelope...${RESET}"
+S6_STAGE_EXIT=0
+(cd "$S6_DIR" && ENVY_PASSPHRASE_STAGING="stg-pass" \
+  "$ENVY" encrypt -e staging < /dev/null 2>&1) || S6_STAGE_EXIT=$?
+assert_eq "Headless seal staging exits 0" "0" "$S6_STAGE_EXIT"
+
+# Capture the staging envelope bytes before the multi-env run.
+S6_STAGING_BEFORE=""
+S6_STAGING_BEFORE="$(jq -r '.environments.staging' "$S6_ENC" 2>/dev/null || echo "MISSING")"
+
+# Step 2: seal development with its own passphrase (smart merge adds it).
+echo -e "${YELLOW}  [S6] Step 2: Sealing development with per-env passphrase...${RESET}"
+S6_DEV_EXIT=0
+(cd "$S6_DIR" && ENVY_PASSPHRASE_DEVELOPMENT="dev-secret" \
+  "$ENVY" encrypt -e development < /dev/null 2>&1) || S6_DEV_EXIT=$?
+assert_eq "Headless seal development exits 0" "0" "$S6_DEV_EXIT"
+
+# Step 3: seal production with its own passphrase (smart merge adds it).
+echo -e "${YELLOW}  [S6] Step 3: Sealing production with per-env passphrase...${RESET}"
+S6_PROD_EXIT=0
+(cd "$S6_DIR" && ENVY_PASSPHRASE_PRODUCTION="prod-secret" \
+  "$ENVY" encrypt -e production < /dev/null 2>&1) || S6_PROD_EXIT=$?
+assert_eq "Headless seal production exits 0" "0" "$S6_PROD_EXIT"
+
+# Step 4: verify envy.enc contains all three envelopes.
+echo -e "${YELLOW}  [S6] Step 4: Verifying all three envelopes coexist...${RESET}"
+S6_CONTENT="$(cat "$S6_ENC")"
+assert_contains "envy.enc has development" '"development"' "$S6_CONTENT"
+assert_contains "envy.enc has production"  '"production"'  "$S6_CONTENT"
+assert_contains "envy.enc has staging"     '"staging"'     "$S6_CONTENT"
+
+# Step 5: verify staging envelope bytes are unchanged (SC-002).
+echo -e "${YELLOW}  [S6] Step 5: Verifying staging was not re-sealed (SC-002)...${RESET}"
+S6_STAGING_AFTER=""
+S6_STAGING_AFTER="$(jq -r '.environments.staging' "$S6_ENC" 2>/dev/null || echo "MISSING")"
+assert_eq "staging envelope unchanged after smart merge" "$S6_STAGING_BEFORE" "$S6_STAGING_AFTER"
+
+# Step 6: decrypt development with its passphrase and verify the secret.
+echo -e "${YELLOW}  [S6] Step 6: Decrypting development and verifying secret...${RESET}"
+S6_DEC_EXIT=0
+(cd "$S6_DIR" && ENVY_PASSPHRASE="dev-secret" \
+  "$ENVY" decrypt < /dev/null 2>&1) || S6_DEC_EXIT=$?
+assert_eq "Headless decrypt (dev-pass) exits 0" "0" "$S6_DEC_EXIT"
+S6_TOKEN="$(cd "$S6_DIR" && "$ENVY" get DEPLOY_TOKEN -e development)"
+assert_eq "DEPLOY_TOKEN matches after decrypt" "ghp_s6dev" "$S6_TOKEN"
 
 # =============================================================================
 # Summary

@@ -12,6 +12,7 @@
 
 mod aead;
 pub mod artifact;
+pub mod diceware;
 mod error;
 mod keyring;
 
@@ -21,5 +22,6 @@ pub use artifact::{
     KDF_PARALLELISM, KDF_SALT_BYTES, KDF_TIME_COST, KdfParams, SyncArtifact, derive_key,
     seal_envelope, unseal_envelope,
 };
+pub use diceware::suggest_passphrase;
 pub use error::CryptoError;
 pub use keyring::get_or_create_master_key;

@@ -14,7 +14,8 @@ use std::path::Path;
 use zeroize::Zeroizing;
 
 use crate::crypto::artifact::{
-    ARTIFACT_VERSION, ArtifactError, ArtifactPayload, SyncArtifact, seal_envelope, unseal_envelope,
+    ARTIFACT_VERSION, ArtifactError, ArtifactPayload, EncryptedEnvelope, SyncArtifact,
+    seal_envelope, unseal_envelope,
 };
 use crate::db::{ProjectId, Vault};
 
@@ -173,19 +174,132 @@ pub fn unseal_artifact(
 }
 
 // ---------------------------------------------------------------------------
-// T029 — write_artifact
+// T029 — write_artifact / write_artifact_atomic
 // ---------------------------------------------------------------------------
 
-/// Serializes `artifact` to pretty-printed JSON and writes it to `path`.
+/// Serializes `artifact` to pretty-printed JSON and writes it atomically.
 ///
-/// Keys are serialized in alphabetical order (guaranteed by [`BTreeMap`]).
-/// Overwrites any existing file at `path`.
+/// Delegates to [`write_artifact_atomic`]. The `path` file is only replaced
+/// after a successful write to the sibling `.tmp` file, guaranteeing that a
+/// crash mid-write leaves the previous file intact (FR-006, SC-003).
 ///
 /// # Errors
-/// - [`SyncError::Io`] on serialization or file write failure.
+/// - [`SyncError::Io`] on serialization, write, or rename failure.
 pub fn write_artifact(artifact: &SyncArtifact, path: &Path) -> Result<(), SyncError> {
+    write_artifact_atomic(artifact, path)
+}
+
+/// Serializes `artifact` to pretty-printed JSON and writes it atomically.
+///
+/// Writes JSON to `envy.enc.tmp` (a sibling file in the same directory as
+/// `path`), then calls `std::fs::rename` to replace `path`. Both files are on
+/// the same filesystem by construction (same directory), so the rename is
+/// atomic on POSIX and on Windows Vista+.
+///
+/// # Errors
+/// - [`SyncError::Io`] on serialization, write, or rename failure.
+pub fn write_artifact_atomic(artifact: &SyncArtifact, path: &Path) -> Result<(), SyncError> {
+    let tmp = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("envy.enc.tmp");
     let json = serde_json::to_string_pretty(artifact).map_err(|e| SyncError::Io(e.to_string()))?;
-    std::fs::write(path, json.as_bytes()).map_err(|e| SyncError::Io(e.to_string()))
+    std::fs::write(&tmp, json.as_bytes()).map_err(|e| SyncError::Io(e.to_string()))?;
+    std::fs::rename(&tmp, path).map_err(|e| SyncError::Io(format!("atomic rename failed: {e}")))?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// seal_env — seal a single environment (T006)
+// ---------------------------------------------------------------------------
+
+/// Reads all secrets for `env_name` from the vault and seals them into one
+/// [`EncryptedEnvelope`] using `passphrase`.
+///
+/// Used by `cmd_encrypt` to build the per-environment merge map, each env
+/// potentially with its own passphrase (FR-001, FR-002).
+///
+/// # Errors
+/// - [`SyncError::Artifact(ArtifactError::WeakPassphrase)`] if `passphrase` is empty.
+/// - [`SyncError::VaultError`] if reading secrets from the vault fails.
+pub fn seal_env(
+    vault: &Vault,
+    master_key: &[u8; 32],
+    project_id: &ProjectId,
+    env_name: &str,
+    passphrase: &str,
+) -> Result<EncryptedEnvelope, SyncError> {
+    if passphrase.trim().is_empty() {
+        return Err(SyncError::Artifact(ArtifactError::WeakPassphrase));
+    }
+    let secrets_map = crate::core::get_env_secrets(vault, master_key, project_id, env_name)
+        .map_err(|e| SyncError::VaultError(e.to_string()))?;
+    let secrets: BTreeMap<String, Zeroizing<String>> = secrets_map.into_iter().collect();
+    let payload = ArtifactPayload { secrets };
+    Ok(seal_envelope(passphrase, &payload)?)
+}
+
+// ---------------------------------------------------------------------------
+// check_envelope_passphrase — pre-flight decryption check (T008)
+// ---------------------------------------------------------------------------
+
+/// Returns `true` if `passphrase` successfully decrypts `envelope`.
+///
+/// Used by `cmd_encrypt` to detect key rotation (FR-008): when the user
+/// provides a passphrase that does not match the existing sealed data, the
+/// CLI layer shows a rotation warning and defaults to abort.
+///
+/// Both wrong-passphrase and tampered-ciphertext cases return `false` —
+/// AES-GCM cannot distinguish them, and both warrant a rotation warning.
+pub fn check_envelope_passphrase(
+    passphrase: &str,
+    env_name: &str,
+    envelope: &EncryptedEnvelope,
+) -> bool {
+    unseal_envelope(passphrase, env_name, envelope).is_ok()
+}
+
+// ---------------------------------------------------------------------------
+// unseal_env — decrypt a single environment from an artifact (QA-F2)
+// ---------------------------------------------------------------------------
+
+/// Decrypts a single named environment from `artifact` using `passphrase`.
+///
+/// Returns `Ok(Some(secrets))` when the environment exists and the passphrase
+/// is correct. Returns `Ok(None)` when either the environment is not found in
+/// the artifact or the passphrase is wrong / the ciphertext is tampered
+/// (Progressive Disclosure — never hard-errors on auth failure).
+///
+/// Used by `cmd_decrypt` to support per-environment passphrase resolution
+/// (`ENVY_PASSPHRASE_<ENV>`) in headless mode (QA-F2).
+pub fn unseal_env(
+    artifact: &SyncArtifact,
+    env_name: &str,
+    passphrase: &str,
+) -> Result<Option<BTreeMap<String, Zeroizing<String>>>, SyncError> {
+    let envelope = match artifact.environments.get(env_name) {
+        Some(e) => e,
+        None => return Ok(None),
+    };
+    match unseal_envelope(passphrase, env_name, envelope) {
+        Ok(payload) => Ok(Some(payload.secrets)),
+        Err(_) => Ok(None), // Wrong passphrase or tampered data → graceful skip.
+    }
+}
+
+// ---------------------------------------------------------------------------
+// new_empty_artifact — construct an empty SyncArtifact (used by CLI merge)
+// ---------------------------------------------------------------------------
+
+/// Returns a new, empty [`SyncArtifact`] at the current schema version.
+///
+/// Used by `cmd_encrypt` to start a fresh merge base when `envy.enc` does not
+/// yet exist (FR-005: first-time encrypt of a project).
+pub fn new_empty_artifact() -> SyncArtifact {
+    SyncArtifact {
+        version: ARTIFACT_VERSION,
+        environments: BTreeMap::new(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -358,6 +472,49 @@ mod tests {
             matches!(result, Err(SyncError::UnsupportedVersion(999))),
             "unknown version must return UnsupportedVersion(999), got: {:?}",
             result.err()
+        );
+    }
+
+    // T010 — write_artifact_atomic_writes_correctly_and_removes_tmp
+    #[test]
+    fn write_artifact_atomic_writes_correctly_and_removes_tmp() {
+        let tmp_dir = tempfile::tempdir().expect("tempdir must succeed");
+        let path = tmp_dir.path().join("envy.enc");
+        let tmp_path = tmp_dir.path().join("envy.enc.tmp");
+
+        let dev_envelope = make_envelope("pass", "KEY", "val");
+        let mut environments = BTreeMap::new();
+        environments.insert("development".to_string(), dev_envelope);
+        let artifact = SyncArtifact {
+            version: ARTIFACT_VERSION,
+            environments,
+        };
+
+        write_artifact_atomic(&artifact, &path).expect("atomic write must succeed");
+
+        // envy.enc must exist and be parseable.
+        let recovered = read_artifact(&path).expect("read must succeed after atomic write");
+        assert!(recovered.environments.contains_key("development"));
+
+        // The .tmp file must NOT exist after a successful rename.
+        assert!(
+            !tmp_path.exists(),
+            "envy.enc.tmp must be removed after successful atomic write"
+        );
+    }
+
+    // T011 — check_envelope_passphrase_correct_and_wrong
+    #[test]
+    fn check_envelope_passphrase_correct_and_wrong() {
+        let correct_envelope = make_envelope("pass-A", "SECRET", "value");
+
+        assert!(
+            check_envelope_passphrase("pass-A", "development", &correct_envelope),
+            "correct passphrase must return true"
+        );
+        assert!(
+            !check_envelope_passphrase("pass-B", "development", &correct_envelope),
+            "wrong passphrase must return false"
         );
     }
 }
