@@ -36,16 +36,17 @@ fn test_vault_opens_successfully() {
     // Reaching this line means open succeeded — the assertion is implicit.
 }
 
-/// (b) PRAGMA user_version equals 1 after the first open.
+/// (b) PRAGMA user_version equals 2 after the first open.
 ///
-/// Verifies that `run_migrations` ran and set the schema version correctly.
+/// Verifies that `run_migrations` ran both V1 and V2 migrations and set the
+/// schema version to 2.
 #[test]
 fn test_schema_version_is_one_after_open() {
     let (vault, _tmp) = open_temp_vault();
     let version = vault
         .pragma_int("user_version")
         .expect("pragma_int('user_version') must succeed on an open vault");
-    assert_eq!(version, 1, "user_version must be 1 after initial migration");
+    assert_eq!(version, 2, "user_version must be 2 after initial migration");
 }
 
 /// (c) All three tables exist in the vault after the first open.
@@ -72,19 +73,19 @@ fn test_reopen_is_idempotent() {
     let tmp = tempfile::NamedTempFile::new()
         .expect("NamedTempFile::new always succeeds in a writable temp dir");
 
-    // First open — runs migrations, sets user_version = 1.
+    // First open — runs migrations, sets user_version = 2.
     {
         let vault = Vault::open(tmp.path(), &DUMMY_KEY).expect("first open must succeed");
         vault.close().expect("close must succeed");
     }
 
-    // Second open — should succeed without error and leave user_version = 1.
+    // Second open — should succeed without error and leave user_version = 2.
     let vault =
         Vault::open(tmp.path(), &DUMMY_KEY).expect("second open of the same vault must succeed");
     let version = vault
         .pragma_int("user_version")
         .expect("pragma_int must succeed on second open");
-    assert_eq!(version, 1, "user_version must still be 1 on re-open");
+    assert_eq!(version, 2, "user_version must still be 2 on re-open");
 }
 
 /// (e) PRAGMA foreign_keys is ON (value = 1) after open.

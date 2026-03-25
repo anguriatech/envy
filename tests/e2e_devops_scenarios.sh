@@ -9,6 +9,7 @@
 #   4. Malicious Actor — AES-GCM tampering detection
 #   5. Machine-Readable Output Formats (--format flag)
 #   6. Multi-Env Headless Encryption with Smart Merge (FR-001, FR-005, SC-002)
+#   8. Sync Status Command (FR-001–FR-008, US1–US4)
 #
 # Requirements:
 #   - `envy` binary built or passed via ENVY_BIN env var
@@ -525,6 +526,84 @@ S6_DEC_EXIT=0
 assert_eq "Headless decrypt (dev-pass) exits 0" "0" "$S6_DEC_EXIT"
 S6_TOKEN="$(cd "$S6_DIR" && "$ENVY" get DEPLOY_TOKEN -e development)"
 assert_eq "DEPLOY_TOKEN matches after decrypt" "ghp_s6dev" "$S6_TOKEN"
+
+# =============================================================================
+# SCENARIO 8 — Sync Status Command (010-status-command)
+#
+# Verifies:
+#   - US1: `envy status` exits 0 and shows "Never Sealed" before any encrypt
+#   - US2: `envy status` shows "In Sync" after encrypt and "Modified" after set
+#   - US3: `envy status --format json` exits 0 and returns valid JSON
+#   - US4: Artifact metadata (sealed envs, mtime) appears in table and JSON
+# =============================================================================
+
+section "Scenario 8 — Sync Status Command"
+
+echo -e "${YELLOW}  [S8] Setting up project...${RESET}"
+init_project "$WORKSPACE/s8-status"
+S8_DIR="$PROJECT_DIR"
+S8_ENC="$ARTIFACT_PATH"
+
+(cd "$S8_DIR" && "$ENVY" set "API_KEY=abc" -e development)
+
+# ── US1: status before any encrypt shows Never Sealed ────────────────────────
+echo -e "${YELLOW}  [S8] US1: status before encrypt exits 0 and shows Never Sealed...${RESET}"
+S8_STATUS1_EXIT=0
+S8_STATUS1="$(cd "$S8_DIR" && "$ENVY" status 2>&1)" || S8_STATUS1_EXIT=$?
+assert_eq   "status before encrypt exits 0"           "0" "$S8_STATUS1_EXIT"
+assert_contains "status before encrypt shows Never Sealed" "Never Sealed" "$S8_STATUS1"
+
+# ── US2: status after encrypt shows In Sync ──────────────────────────────────
+echo -e "${YELLOW}  [S8] US2a: status after encrypt shows In Sync...${RESET}"
+S8_ENC_EXIT=0
+(cd "$S8_DIR" && ENVY_PASSPHRASE="s8-pass" "$ENVY" encrypt < /dev/null 2>&1) \
+  || S8_ENC_EXIT=$?
+assert_eq "encrypt exits 0" "0" "$S8_ENC_EXIT"
+
+S8_STATUS2_EXIT=0
+S8_STATUS2="$(cd "$S8_DIR" && "$ENVY" status 2>&1)" || S8_STATUS2_EXIT=$?
+assert_eq   "status after encrypt exits 0"         "0" "$S8_STATUS2_EXIT"
+assert_contains "status after encrypt shows In Sync"  "In Sync"  "$S8_STATUS2"
+
+# ── US2: status after set_secret shows Modified ──────────────────────────────
+echo -e "${YELLOW}  [S8] US2b: status after set shows Modified...${RESET}"
+sleep 1  # ensure updated_at > sealed_at
+(cd "$S8_DIR" && "$ENVY" set "NEW_KEY=xyz" -e development)
+S8_STATUS3_EXIT=0
+S8_STATUS3="$(cd "$S8_DIR" && "$ENVY" status 2>&1)" || S8_STATUS3_EXIT=$?
+assert_eq   "status after set exits 0"         "0" "$S8_STATUS3_EXIT"
+assert_contains "status after set shows Modified" "Modified" "$S8_STATUS3"
+
+# ── US3: --format json returns valid JSON with expected shape ─────────────────
+echo -e "${YELLOW}  [S8] US3: --format json exits 0 and returns valid JSON...${RESET}"
+S8_JSON_EXIT=0
+S8_JSON="$(cd "$S8_DIR" && "$ENVY" status --format json 2>&1)" || S8_JSON_EXIT=$?
+assert_eq "status --format json exits 0" "0" "$S8_JSON_EXIT"
+
+# Validate JSON structure with jq.
+S8_ENV_COUNT="$(echo "$S8_JSON" | jq '.environments | length' 2>/dev/null || echo "INVALID")"
+assert_eq "JSON has 1 environment" "1" "$S8_ENV_COUNT"
+
+S8_STATUS_STR="$(echo "$S8_JSON" | jq -r '.environments[0].status' 2>/dev/null || echo "INVALID")"
+assert_eq "JSON status is 'modified' after set" "modified" "$S8_STATUS_STR"
+
+S8_ARTIFACT_FOUND="$(echo "$S8_JSON" | jq -r '.artifact.found' 2>/dev/null || echo "INVALID")"
+assert_eq "JSON artifact.found is true after encrypt" "true" "$S8_ARTIFACT_FOUND"
+
+# ── US4: table output contains artifact section ───────────────────────────────
+echo -e "${YELLOW}  [S8] US4: table output shows artifact section...${RESET}"
+assert_contains "table output shows Artifact line" "Artifact:" "$S8_STATUS2"
+assert_contains "table output lists development in artifact" "development" "$S8_STATUS2"
+
+# ── US4: JSON output includes artifact environments list ─────────────────────
+S8_ART_ENVS="$(echo "$S8_JSON" | jq -r '.artifact.environments | join(",")' 2>/dev/null || echo "INVALID")"
+assert_contains "JSON artifact.environments contains development" "development" "$S8_ART_ENVS"
+
+# ── US1: envy st alias works ──────────────────────────────────────────────────
+echo -e "${YELLOW}  [S8] US1: 'envy st' alias works...${RESET}"
+S8_ALIAS_EXIT=0
+(cd "$S8_DIR" && "$ENVY" st 2>&1) || S8_ALIAS_EXIT=$?
+assert_eq "envy st alias exits 0" "0" "$S8_ALIAS_EXIT"
 
 # =============================================================================
 # Summary

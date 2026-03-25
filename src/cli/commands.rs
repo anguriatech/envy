@@ -912,6 +912,277 @@ pub(super) fn cmd_decrypt(
 }
 
 // ---------------------------------------------------------------------------
+// cmd_status — sync-state overview (010-status-command)
+// ---------------------------------------------------------------------------
+
+/// JSON envelope for a single environment (T037).
+#[derive(serde::Serialize)]
+struct EnvStatusJson {
+    name: String,
+    secret_count: i64,
+    last_modified_at: Option<String>,
+    status: &'static str,
+}
+
+/// JSON envelope for the `envy.enc` artifact (T037).
+#[derive(serde::Serialize)]
+struct ArtifactJson {
+    found: bool,
+    path: String,
+    last_modified_at: Option<String>,
+    environments: Vec<String>,
+}
+
+/// Top-level JSON output for `envy status --format json` (T037).
+#[derive(serde::Serialize)]
+struct StatusJson {
+    environments: Vec<EnvStatusJson>,
+    artifact: ArtifactJson,
+}
+
+/// Internal metadata about the `envy.enc` artifact — no decryption (T043).
+struct ArtifactMetadata {
+    /// `true` iff the file exists and contains parseable JSON.
+    found: bool,
+    /// `true` iff the file exists but its JSON is malformed.
+    malformed: bool,
+    /// Unix epoch (UTC, seconds) of the file's last modification time.
+    last_modified_at: Option<i64>,
+    /// Environment names listed in the artifact. Empty if not found or malformed.
+    environments: Vec<String>,
+}
+
+/// Returns a human-readable relative-time string for a Unix epoch timestamp (T025).
+///
+/// Thresholds:
+/// - `delta ≤ 0` → `"unknown"`
+/// - `0 < delta < 60` → `"X seconds ago"`
+/// - `60 ≤ delta < 3600` → `"X minutes ago"`
+/// - `3600 ≤ delta < 86400` → `"X hours ago"`
+/// - `86400 ≤ delta < 30 days` → `"X days ago"`
+/// - `≥ 30 days` → `"YYYY-MM-DD"`
+fn humanize_timestamp(epoch: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let delta = now - epoch;
+    if delta <= 0 {
+        return "unknown".to_string();
+    }
+    if delta < 60 {
+        return format!("{delta} seconds ago");
+    }
+    if delta < 3_600 {
+        let mins = delta / 60;
+        return format!("{mins} minutes ago");
+    }
+    if delta < 86_400 {
+        let hours = delta / 3_600;
+        return format!("{hours} hours ago");
+    }
+    if delta < 30 * 86_400 {
+        let days = delta / 86_400;
+        return format!("{days} days ago");
+    }
+    // Older: ISO date only
+    epoch_to_iso8601(epoch)[..10].to_string()
+}
+
+/// Converts a Unix epoch (UTC seconds) to an ISO 8601 string `YYYY-MM-DDTHH:MM:SSZ` (T038).
+///
+/// Uses the Howard Hinnant civil_from_days algorithm — no `chrono` dependency required.
+/// Returns `"1970-01-01T00:00:00Z"` for `secs == 0`.
+fn epoch_to_iso8601(secs: i64) -> String {
+    // Decompose time-of-day component.
+    let sec_of_day = secs % 86_400;
+    let h = sec_of_day / 3_600;
+    let mi = (sec_of_day % 3_600) / 60;
+    let s = sec_of_day % 60;
+
+    // Convert integer day count to Gregorian date.
+    // Reference: https://howardhinnant.github.io/date_algorithms.html#civil_from_days
+    let z = secs / 86_400 + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // day of era [0, 146096]
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365; // year of era [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // day of year [0, 365]
+    let mp = (5 * doy + 2) / 153; // month of year [0, 11], March-based
+    let d = doy - (153 * mp + 2) / 5 + 1; // day [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // month [1, 12]
+    let y = if m <= 2 { y + 1 } else { y }; // adjust year for Jan/Feb
+
+    format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
+}
+
+/// Reads artifact metadata (env names + mtime) without decrypting (T043).
+///
+/// Returns a metadata struct indicating whether the artifact was found, valid,
+/// or malformed — no secret values are ever accessed.
+fn read_artifact_metadata(artifact_path: &Path) -> ArtifactMetadata {
+    // Read file mtime (works even for malformed JSON files).
+    let last_modified_at = std::fs::metadata(artifact_path).ok().and_then(|m| {
+        m.modified().ok().and_then(|t| {
+            t.duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|d| d.as_secs() as i64)
+        })
+    });
+
+    match crate::core::read_artifact(artifact_path) {
+        Ok(artifact) => ArtifactMetadata {
+            found: true,
+            malformed: false,
+            last_modified_at,
+            environments: artifact.environments.keys().cloned().collect(),
+        },
+        Err(crate::core::SyncError::FileNotFound(_)) => ArtifactMetadata {
+            found: false,
+            malformed: false,
+            last_modified_at: None,
+            environments: vec![],
+        },
+        Err(_) => ArtifactMetadata {
+            found: false,
+            malformed: true,
+            last_modified_at,
+            environments: vec![],
+        },
+    }
+}
+
+/// Builds the `StatusJson` value from status rows + artifact metadata (T037/T039/T045).
+fn build_status_json(rows: &[crate::core::StatusRow], artifact_path: &Path) -> StatusJson {
+    use crate::core::SyncStatus;
+
+    let environments: Vec<EnvStatusJson> = rows
+        .iter()
+        .map(|row| {
+            let status = match row.sync_status {
+                SyncStatus::InSync => "in_sync",
+                SyncStatus::Modified => "modified",
+                SyncStatus::NeverSealed => "never_sealed",
+            };
+            EnvStatusJson {
+                name: row.name.clone(),
+                secret_count: row.secret_count,
+                last_modified_at: row.last_modified_at.map(epoch_to_iso8601),
+                status,
+            }
+        })
+        .collect();
+
+    let meta = read_artifact_metadata(artifact_path);
+    let artifact = ArtifactJson {
+        found: meta.found,
+        path: artifact_path.display().to_string(),
+        last_modified_at: meta.last_modified_at.map(epoch_to_iso8601),
+        environments: meta.environments,
+    };
+
+    StatusJson {
+        environments,
+        artifact,
+    }
+}
+
+/// Serializes the status JSON to `writer` (T039).
+///
+/// Separated from `cmd_status` so that tests can pass a `Vec<u8>` writer
+/// instead of stdout, enabling capture and assertion on the output.
+fn write_status_json(
+    rows: &[crate::core::StatusRow],
+    artifact_path: &Path,
+    writer: &mut impl std::io::Write,
+) -> Result<(), CliError> {
+    let output = build_status_json(rows, artifact_path);
+    serde_json::to_writer(&mut *writer, &output).map_err(|e| CliError::Output(e.to_string()))?;
+    writeln!(writer).map_err(|e| CliError::Output(e.to_string()))?;
+    Ok(())
+}
+
+/// Displays sync status of all environments (T026).
+///
+/// Table format: prints a `comfy_table` environment table followed by an
+/// artifact metadata section. JSON format: outputs a single JSON object.
+///
+/// # Passphrase constraint
+/// MUST NOT prompt for a passphrase, call any decryption function, or read
+/// `ENVY_PASSPHRASE*` environment variables.
+pub(super) fn cmd_status(
+    vault: &Vault,
+    project_id: &ProjectId,
+    artifact_path: &Path,
+    format: OutputFormat,
+) -> Result<(), CliError> {
+    use crate::core::SyncStatus;
+
+    let rows = crate::core::get_status_report(vault, project_id).map_err(CliError::Core)?;
+
+    // JSON path (T039): serialize and exit early.
+    if format == OutputFormat::Json {
+        return write_status_json(&rows, artifact_path, &mut std::io::stdout());
+    }
+
+    // Table path — empty vault guard.
+    if rows.is_empty() {
+        println!("No environments found. Use 'envy set' to add secrets first.");
+        return Ok(());
+    }
+
+    // Build environment table (T026).
+    let mut table = comfy_table::Table::new();
+    table.set_header(vec!["Environment", "Secrets", "Last Modified", "Status"]);
+
+    for row in &rows {
+        let last_modified = if row.secret_count == 0 {
+            "No secrets".to_string()
+        } else {
+            row.last_modified_at
+                .map(humanize_timestamp)
+                .unwrap_or_else(|| "No secrets".to_string())
+        };
+
+        let (status_text, status_color) = match row.sync_status {
+            SyncStatus::InSync => ("\u{2713} In Sync", comfy_table::Color::Green),
+            SyncStatus::Modified => ("\u{26a0} Modified", comfy_table::Color::Yellow),
+            SyncStatus::NeverSealed => ("\u{2717} Never Sealed", comfy_table::Color::Red),
+        };
+
+        table.add_row(vec![
+            comfy_table::Cell::new(&row.name),
+            comfy_table::Cell::new(row.secret_count.to_string()),
+            comfy_table::Cell::new(&last_modified),
+            comfy_table::Cell::new(status_text)
+                .fg(status_color)
+                .add_attribute(comfy_table::Attribute::Bold),
+        ]);
+    }
+
+    println!("{table}");
+
+    // Artifact metadata section (T044).
+    let meta = read_artifact_metadata(artifact_path);
+    let path_display = artifact_path.display();
+    if meta.found {
+        let mtime = meta
+            .last_modified_at
+            .map(humanize_timestamp)
+            .unwrap_or_else(|| "unknown".to_string());
+        let envs = meta.environments.join(", ");
+        println!("\nArtifact: {path_display}  (last written: {mtime})");
+        println!("  Sealed environments: {envs}");
+    } else if meta.malformed {
+        println!("\nArtifact: {path_display}  \u{2014} unreadable (malformed JSON)");
+    } else {
+        println!("\nArtifact: {path_display}  \u{2014} not found");
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // T008–T011, T022–T023 — Unit tests (written FIRST per TDD discipline)
 // ---------------------------------------------------------------------------
 
@@ -919,6 +1190,7 @@ pub(super) fn cmd_decrypt(
 mod tests {
     use super::{Vault, cmd_decrypt, cmd_encrypt};
     use crate::cli::error::{CliError, cli_exit_code};
+    use crate::cli::format::OutputFormat;
 
     // -----------------------------------------------------------------------
     // T008–T011 — assignment parsing (Phase 3)
@@ -1615,6 +1887,360 @@ mod tests {
             "re-imported value must match original"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Phase 3 — cmd_status tests (T027–T032)
+    // -----------------------------------------------------------------------
+
+    // T027 — never-sealed env shows in table without error
+    #[test]
+    fn status_shows_never_sealed_for_new_environment() {
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_MASTER_KEY, &pid, "development", "KEY", "val")
+            .expect("set_secret must succeed");
+
+        let artifact_path = tmp.path().join("envy.enc");
+        let result = super::cmd_status(&vault, &pid, &artifact_path, OutputFormat::Table);
+        assert!(
+            result.is_ok(),
+            "cmd_status must return Ok for never-sealed env: {:?}",
+            result.err()
+        );
+    }
+
+    // T028 — env with a direct DB marker renders as In Sync
+    #[test]
+    fn status_shows_in_sync_via_direct_db_marker() {
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_MASTER_KEY, &pid, "development", "KEY", "val")
+            .expect("set_secret must succeed");
+
+        // Insert a sync marker with a timestamp far in the future so the status is InSync.
+        let env_id = vault
+            .get_environment_by_name(&pid, "development")
+            .expect("env must exist")
+            .id;
+        vault
+            .upsert_sync_marker(&env_id, i64::MAX)
+            .expect("upsert_sync_marker must succeed");
+
+        let artifact_path = tmp.path().join("envy.enc");
+        let result = super::cmd_status(&vault, &pid, &artifact_path, OutputFormat::Table);
+        assert!(
+            result.is_ok(),
+            "cmd_status must return Ok for in-sync env: {:?}",
+            result.err()
+        );
+    }
+
+    // T029 — empty vault returns Ok with "No environments" message
+    #[test]
+    fn status_empty_vault_returns_ok() {
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+
+        let artifact_path = tmp.path().join("envy.enc");
+        let result = super::cmd_status(&vault, &pid, &artifact_path, OutputFormat::Table);
+        assert!(
+            result.is_ok(),
+            "cmd_status on empty vault must return Ok: {:?}",
+            result.err()
+        );
+    }
+
+    // T030 — humanize_timestamp: 30 seconds ago
+    #[test]
+    fn humanize_timestamp_seconds() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let result = super::humanize_timestamp(now - 30);
+        assert!(
+            result.contains("seconds ago"),
+            "30 seconds ago must produce '… seconds ago', got: {result}"
+        );
+    }
+
+    // T031 — humanize_timestamp: 90 seconds ago → minutes ago
+    #[test]
+    fn humanize_timestamp_minutes() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let result = super::humanize_timestamp(now - 90);
+        assert!(
+            result.contains("minutes ago"),
+            "90 seconds ago must produce '… minutes ago', got: {result}"
+        );
+    }
+
+    // T032 — humanize_timestamp: 3 days ago
+    #[test]
+    fn humanize_timestamp_days() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let result = super::humanize_timestamp(now - 3 * 86_400);
+        assert!(
+            result.contains("days ago"),
+            "3 days ago must produce '… days ago', got: {result}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4 — sync marker wiring tests (T035–T036)
+    // -----------------------------------------------------------------------
+
+    // T035 — after cmd_encrypt, cmd_status sees the environment as In Sync (full round-trip)
+    #[test]
+    fn status_shows_in_sync_after_encrypt() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_MASTER_KEY, &pid, "development", "KEY", "val")
+            .expect("set_secret must succeed");
+
+        let artifact_path = tmp.path().join("envy.enc");
+
+        // SAFETY: single-threaded access serialised by ENV_LOCK above.
+        unsafe { std::env::set_var("ENVY_PASSPHRASE", "test-passphrase") };
+        let enc_result = cmd_encrypt(&vault, &TEST_MASTER_KEY, &pid, &artifact_path, None);
+        unsafe { std::env::remove_var("ENVY_PASSPHRASE") };
+        enc_result.expect("cmd_encrypt must succeed");
+
+        // After encrypt the sync marker must exist → status returns Ok.
+        let result = super::cmd_status(&vault, &pid, &artifact_path, OutputFormat::Table);
+        assert!(
+            result.is_ok(),
+            "cmd_status must return Ok after encrypt: {:?}",
+            result.err()
+        );
+
+        // Verify the environment is actually InSync via the status report.
+        let rows = crate::core::get_status_report(&vault, &pid).expect("get_status_report");
+        let dev = rows
+            .iter()
+            .find(|r| r.name == "development")
+            .expect("development must exist");
+        assert_eq!(
+            dev.sync_status,
+            crate::core::SyncStatus::InSync,
+            "development must be InSync after encrypt"
+        );
+    }
+
+    // T036 — after encrypt + set_secret, cmd_status sees the environment as Modified
+    #[test]
+    fn status_shows_modified_after_set() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_MASTER_KEY, &pid, "development", "KEY", "val")
+            .expect("set_secret must succeed");
+
+        let artifact_path = tmp.path().join("envy.enc");
+
+        // Seal first so sealed_at is set.
+        unsafe { std::env::set_var("ENVY_PASSPHRASE", "test-passphrase") };
+        let enc_result = cmd_encrypt(&vault, &TEST_MASTER_KEY, &pid, &artifact_path, None);
+        unsafe { std::env::remove_var("ENVY_PASSPHRASE") };
+        enc_result.expect("cmd_encrypt must succeed");
+
+        // Sleep 1 second so the next set_secret timestamp is strictly after sealed_at.
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        // Modify a secret after sealing.
+        crate::core::set_secret(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            "development",
+            "NEW_KEY",
+            "new",
+        )
+        .expect("set_secret after encrypt must succeed");
+
+        // Status must return Ok and environment must be Modified.
+        let result = super::cmd_status(&vault, &pid, &artifact_path, OutputFormat::Table);
+        assert!(
+            result.is_ok(),
+            "cmd_status must return Ok after set: {:?}",
+            result.err()
+        );
+
+        let rows = crate::core::get_status_report(&vault, &pid).expect("get_status_report");
+        let dev = rows
+            .iter()
+            .find(|r| r.name == "development")
+            .expect("development must exist");
+        assert_eq!(
+            dev.sync_status,
+            crate::core::SyncStatus::Modified,
+            "development must be Modified after set"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 5 — JSON output tests (T040–T042)
+    // -----------------------------------------------------------------------
+
+    // T040 — cmd_status JSON returns Ok and produces valid JSON with 1 environment
+    #[test]
+    fn status_json_output_is_valid_json() {
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_MASTER_KEY, &pid, "development", "KEY", "val")
+            .expect("set_secret must succeed");
+
+        let artifact_path = tmp.path().join("envy.enc");
+
+        // Capture output via write_status_json using a Vec<u8> writer.
+        let rows = crate::core::get_status_report(&vault, &pid).expect("get_status_report");
+        let mut buf: Vec<u8> = Vec::new();
+        super::write_status_json(&rows, &artifact_path, &mut buf)
+            .expect("write_status_json must succeed");
+
+        let json_str = String::from_utf8(buf).expect("must be valid UTF-8");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("output must be valid JSON");
+        let envs = parsed["environments"]
+            .as_array()
+            .expect("environments must be an array");
+        assert_eq!(
+            envs.len(),
+            1,
+            "must have exactly 1 environment, got: {}",
+            envs.len()
+        );
+    }
+
+    // T041 — JSON status strings are lowercase snake_case
+    #[test]
+    fn status_json_status_strings_are_lowercase() {
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_MASTER_KEY, &pid, "development", "KEY", "val")
+            .expect("set_secret must succeed");
+
+        // Insert a past sync marker so status is "modified" (secret newer than seal).
+        let env_id = vault
+            .get_environment_by_name(&pid, "development")
+            .expect("env must exist")
+            .id;
+        vault
+            .upsert_sync_marker(&env_id, 1_000) // very old seal timestamp
+            .expect("upsert_sync_marker must succeed");
+
+        let artifact_path = tmp.path().join("envy.enc");
+        let rows = crate::core::get_status_report(&vault, &pid).expect("get_status_report");
+        let mut buf: Vec<u8> = Vec::new();
+        super::write_status_json(&rows, &artifact_path, &mut buf)
+            .expect("write_status_json must succeed");
+
+        let json_str = String::from_utf8(buf).expect("valid UTF-8");
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).expect("valid JSON");
+        let status = parsed["environments"][0]["status"]
+            .as_str()
+            .expect("status must be a string");
+        assert_eq!(
+            status, "modified",
+            "status must be lowercase 'modified', got: {status}"
+        );
+    }
+
+    // T042 — epoch_to_iso8601 known values
+    #[test]
+    fn epoch_to_iso8601_known_value() {
+        assert_eq!(
+            super::epoch_to_iso8601(0),
+            "1970-01-01T00:00:00Z",
+            "epoch 0 must map to 1970-01-01T00:00:00Z"
+        );
+        assert_eq!(
+            super::epoch_to_iso8601(1_000_000_000),
+            "2001-09-09T01:46:40Z",
+            "epoch 1000000000 must map to 2001-09-09T01:46:40Z"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 6 — artifact metadata tests (T046–T048)
+    // -----------------------------------------------------------------------
+
+    // T046 — artifact not found renders gracefully (exit 0)
+    #[test]
+    fn status_artifact_not_found_renders_gracefully() {
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_MASTER_KEY, &pid, "development", "KEY", "val")
+            .expect("set_secret must succeed");
+
+        let nonexistent_artifact = tmp.path().join("no-such-file.enc");
+        let result = super::cmd_status(&vault, &pid, &nonexistent_artifact, OutputFormat::Table);
+        assert!(
+            result.is_ok(),
+            "cmd_status must return Ok when artifact not found: {:?}",
+            result.err()
+        );
+    }
+
+    // T047 — malformed artifact renders gracefully (exit 0)
+    #[test]
+    fn status_artifact_malformed_renders_gracefully() {
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_MASTER_KEY, &pid, "development", "KEY", "val")
+            .expect("set_secret must succeed");
+
+        let bad_artifact = tmp.path().join("bad.enc");
+        std::fs::write(&bad_artifact, b"not valid json").expect("write must succeed");
+
+        let result = super::cmd_status(&vault, &pid, &bad_artifact, OutputFormat::Table);
+        assert!(
+            result.is_ok(),
+            "cmd_status must return Ok when artifact is malformed: {:?}",
+            result.err()
+        );
+    }
+
+    // T048 — JSON output has artifact.found=false when artifact is missing
+    #[test]
+    fn status_json_artifact_found_false_when_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_MASTER_KEY, &pid, "development", "KEY", "val")
+            .expect("set_secret must succeed");
+
+        let nonexistent = tmp.path().join("missing.enc");
+        let rows = crate::core::get_status_report(&vault, &pid).expect("get_status_report");
+        let mut buf: Vec<u8> = Vec::new();
+        super::write_status_json(&rows, &nonexistent, &mut buf)
+            .expect("write_status_json must succeed");
+
+        let json_str = String::from_utf8(buf).expect("valid UTF-8");
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).expect("valid JSON");
+        assert_eq!(
+            parsed["artifact"]["found"],
+            serde_json::Value::Bool(false),
+            "artifact.found must be false when file is missing"
+        );
+        let envs = parsed["artifact"]["environments"]
+            .as_array()
+            .expect("environments must be array");
+        assert!(
+            envs.is_empty(),
+            "artifact.environments must be empty when file is missing"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // T026 — contract: Exit code 2 for empty/whitespace passphrase
+    // -----------------------------------------------------------------------
 
     // T026 — contract: Exit code 2 for empty/whitespace passphrase
     #[test]

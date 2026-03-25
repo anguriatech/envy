@@ -5,6 +5,7 @@
 //!
 //! Current versions:
 //!   0 → 1: Initial schema (projects, environments, secrets).
+//!   1 → 2: Add sync_markers table (sealed_at per environment).
 
 use super::error::{DbError, is_encryption_error};
 
@@ -85,10 +86,29 @@ CREATE TABLE IF NOT EXISTS secrets (
 );
 ";
 
+/// DDL for schema version 2.
+///
+/// Adds the `sync_markers` table which records the Unix timestamp of the last
+/// successful `envy encrypt` operation per environment. Used by `envy status`
+/// to compute In Sync / Modified / Never Sealed without decrypting any secrets.
+const SCHEMA_V2: &str = "
+CREATE TABLE IF NOT EXISTS sync_markers (
+    -- UUID of the sealed environment (FK to environments.id).
+    -- ON DELETE CASCADE ensures rows are cleaned up when the environment is deleted.
+    environment_id  TEXT    NOT NULL PRIMARY KEY
+                            REFERENCES environments(id) ON DELETE CASCADE,
+
+    -- Unix epoch (UTC, seconds) of the last successful seal for this environment.
+    -- Updated via INSERT OR REPLACE on every successful envy encrypt.
+    sealed_at       INTEGER NOT NULL
+);
+";
+
 /// Checks the current `user_version` and applies any pending migrations.
 ///
-/// - If `user_version` is 0 (new vault): creates all tables and sets version to 1.
-/// - If `user_version` is >= 1: a no-op (future versions will add incremental steps).
+/// - If `user_version` is 0 (new vault): creates all V1 tables and sets version to 1.
+/// - If `user_version` is 1: creates the `sync_markers` table and sets version to 2.
+/// - If `user_version` is >= 2: a no-op (future versions will add incremental steps).
 ///
 /// Any SQL error during the version read is checked for `SQLITE_NOTADB` (26) and
 /// mapped to `DbError::EncryptionError` — the most common cause of that error is a
@@ -109,6 +129,20 @@ pub fn run_migrations(conn: &rusqlite::Connection) -> Result<(), DbError> {
             .map_err(|e| DbError::MigrationError(e.to_string()))?;
 
         conn.pragma_update(None, "user_version", 1i64)
+            .map_err(|e| DbError::MigrationError(e.to_string()))?;
+    }
+
+    // Re-read the version after the V1 step so a fresh vault (0 → 1 → 2)
+    // also gets the V2 migration in the same open call.
+    let version: i64 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(|e| DbError::MigrationError(e.to_string()))?;
+
+    if version == 1 {
+        conn.execute_batch(SCHEMA_V2)
+            .map_err(|e| DbError::MigrationError(e.to_string()))?;
+
+        conn.pragma_update(None, "user_version", 2i64)
             .map_err(|e| DbError::MigrationError(e.to_string()))?;
     }
 
