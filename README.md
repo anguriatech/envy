@@ -18,6 +18,7 @@ When you need your secrets, `envy run` injects them directly into your process's
 - **Smart Merge** — Seal environments independently with separate passphrases. Envy merges new envelopes into an existing `envy.enc` without disturbing untouched environments — zero Git conflicts.
 - **Progressive Disclosure** — Each environment can have its own passphrase. A developer with the dev key imports `development`; `production` is listed as gracefully skipped. No error, no alarm.
 - **Sync Status dashboard** — `envy status` gives an instant, read-only overview of every environment's sync state relative to `envy.enc`. No passphrase required.
+- **Pre-encrypt diff** — `envy diff` shows exactly what will change before you seal — additions, deletions, and modifications — so you never encrypt blind. Values are hidden by default; `--reveal` opts in explicitly.
 - **CI/CD headless mode** — Set `ENVY_PASSPHRASE_<ENV>` in your pipeline. `envy decrypt` detects it automatically — no interactive prompts, no code changes.
 - **Diceware passphrase generation** — Envy suggests a cryptographically strong, human-memorable passphrase when you seal your vault. You can accept it or type your own.
 - **Legacy migration** — `envy migrate .env` imports an existing dotenv file in one step.
@@ -107,6 +108,7 @@ envy completions powershell >> $PROFILE
 | `envy encrypt [-e ENV]` | `enc` | Seal vault into `envy.enc` |
 | `envy decrypt` | `dec` | Unseal `envy.enc` and restore secrets |
 | `envy export [-e ENV]` | — | Print all secrets to stdout (dotenv / JSON / shell) |
+| `envy diff [-e ENV] [--reveal]` | `df` | Compare vault against `envy.enc` before encrypting |
 | `envy status` | `st` | Show sync status dashboard |
 
 ---
@@ -161,11 +163,99 @@ envy status --format json
 
 ---
 
+## Pre-Encrypt Diff
+
+`envy status` tells you *that* something changed. `envy diff` tells you *what* changed — before you seal.
+
+```
+$ envy diff
+
+envy diff: development (vault ↔ envy.enc)
+
+  + NEW_API_KEY
+  - DEPRECATED_TOKEN
+  ~ DATABASE_URL
+
+3 changes: 1 added, 1 removed, 1 modified
+```
+
+Additions are green, deletions red, modifications yellow. Secret values are **never shown by default** — only key names appear.
+
+### Revealing values
+
+When you need to see exactly what changed, opt in explicitly with `--reveal`:
+
+```
+$ envy diff --reveal
+
+⚠ Warning: secret values are visible in the output below.
+
+envy diff: development (vault ↔ envy.enc)
+
+  + NEW_API_KEY
+    vault:    sk_live_abc123
+
+  - DEPRECATED_TOKEN
+    artifact: eyJhbGciOi...
+
+  ~ DATABASE_URL
+    artifact: postgres://old-host:5432/db
+    vault:    postgres://new-host:5432/db
+
+3 changes: 1 added, 1 removed, 1 modified
+```
+
+The warning is printed to stderr so it never contaminates piped output.
+
+### JSON output for CI/CD
+
+```bash
+envy diff --format json
+```
+
+```json
+{
+  "environment": "development",
+  "has_differences": true,
+  "summary": { "added": 1, "removed": 1, "modified": 1, "total": 3 },
+  "changes": [
+    { "key": "DATABASE_URL", "type": "modified" },
+    { "key": "DEPRECATED_TOKEN", "type": "removed" },
+    { "key": "NEW_API_KEY", "type": "added" }
+  ]
+}
+```
+
+Without `--reveal`, the `old_value` and `new_value` fields are entirely absent from the JSON — not `null`, not `"***"`, but missing. This prevents accidental exposure through key enumeration.
+
+### Exit codes
+
+`envy diff` follows the `diff(1)` convention:
+
+| Code | Meaning |
+|------|---------|
+| 0 | No differences — vault and artifact are in sync |
+| 1 | Differences found (additions, deletions, or modifications) |
+| 2+ | Error (wrong passphrase, missing environment, etc.) |
+
+This makes it a natural CI/CD gate:
+
+```bash
+# Fail the pipeline if there are unsealed changes
+envy diff -e production && echo "clean" || echo "drift detected — run envy encrypt"
+```
+
+---
+
 ## Team Sync via Git
 
 ### Sealing the vault
 
 ```bash
+# Optional: preview what will change before sealing
+envy diff
+# 2 changes: 1 added, 1 modified
+
 envy encrypt
 # Envy suggests a Diceware passphrase:
 #   Suggested passphrase: correct-horse-battery-staple
@@ -262,16 +352,22 @@ jobs:
         run: envy run -e production -- ./scripts/deploy.sh
 ```
 
-### Using `envy status --format json` as a quality gate
+### Using `envy diff` and `envy status` as quality gates
 
 ```bash
-# Parse sync state in a shell script
-STATUS=$(envy status --format json)
+# Quick check: does the artifact match the vault?
+envy diff -e production || { echo "Unsealed changes detected. Run 'envy encrypt'."; exit 1; }
 
-if echo "$STATUS" | jq -e '.environments[] | select(.status == "modified")' > /dev/null; then
+# Or use JSON for richer assertions:
+DIFF=$(envy diff -e production --format json)
+echo "$DIFF" | jq -e '.has_differences == false' > /dev/null || exit 1
+
+# Status-based check (no passphrase needed):
+STATUS=$(envy status --format json)
+echo "$STATUS" | jq -e '.environments[] | select(.status == "modified")' > /dev/null && {
   echo "ERROR: Some environments have unsealed changes. Run 'envy encrypt' first."
   exit 1
-fi
+}
 ```
 
 ---
@@ -326,11 +422,12 @@ Team sync via Git:
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success; or partial decrypt (≥ 1 environment imported, some skipped) |
-| 1 | Not found (manifest, secret, `envy.enc`); or zero environments imported |
-| 2 | Invalid input (key name, assignment format, empty passphrase) |
-| 3 | Initialisation conflict |
-| 4 | Vault / crypto failure; malformed `envy.enc`; unsupported version |
+| 0 | Success; or partial decrypt (≥ 1 environment imported, some skipped); or `envy diff` with no differences |
+| 1 | Not found (manifest, secret, `envy.enc`); or zero environments imported; or `envy diff` with differences found |
+| 2 | Invalid input (key name, assignment format, empty/wrong passphrase) |
+| 3 | Initialisation conflict; or environment not found (`envy diff`) |
+| 4 | Vault / crypto failure |
+| 5 | Artifact unreadable (malformed JSON or unsupported version) |
 | 127 | Child binary not found (`envy run`) |
 | N | Child process exit code (proxied by `envy run`) |
 
@@ -338,6 +435,6 @@ Team sync via Git:
 
 ## Roadmap
 
-Envy has completed **Phase 1** (encrypted local vault), **Phase 2** (GitOps sync & CI/CD), and the **Phase 2.x** improvements (output formats, multi-env encrypt, sync status). Here's what's next:
+Envy has completed **Phase 1** (encrypted local vault), **Phase 2** (GitOps sync & CI/CD), and the **Phase 2.x** improvements (output formats, multi-env encrypt, sync status, pre-encrypt diff). Here's what's next:
 
 **Phase 3 — Ecosystem & GUI**: An official VS Code Extension to make secret management visual and seamless, without needing to leave the editor.

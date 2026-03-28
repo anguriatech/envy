@@ -19,7 +19,8 @@
       "Bash(.specify/scripts/bash/update-agent-context.sh claude:*)",
       "Bash(.specify/scripts/bash/create-new-feature.sh \"Adding machine-readable output formats via a global --format flag\" --json --short-name \"output-formats\")",
       "Bash(.specify/scripts/bash/create-new-feature.sh \"Multi-environment encryption and smart merging for envy encrypt command\" --json --short-name \"multi-env-encrypt\")",
-      "Bash(cargo audit:*)"
+      "Bash(cargo audit:*)",
+      "Bash(.specify/scripts/bash/create-new-feature.sh \"envy diff — Pre-encrypt secret comparison command. Compares decrypted local vault secrets against the currently sealed envy.enc artifact for a specific environment, showing Git-like additions, deletions, and modifications BEFORE the user runs envy encrypt.\" --json --short-name \"envy-diff\")"
     ]
   }
 }

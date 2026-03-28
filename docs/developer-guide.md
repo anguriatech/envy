@@ -83,6 +83,8 @@ envy/
 │   │   ├── ops.rs        # set_secret, get_secret, list_secret_keys, delete_secret, get_env_secrets
 │   │   ├── manifest.rs   # find_manifest, create_manifest, Manifest struct
 │   │   ├── sync.rs       # seal_artifact, unseal_artifact, write_artifact, read_artifact
+│   │   ├── diff.rs       # compute_diff — pure diff logic (ChangeType, DiffEntry, DiffReport)
+│   │   ├── status.rs     # derive_sync_status, get_status_report
 │   │   └── error.rs      # CoreError enum
 │   ├── crypto/
 │   │   ├── mod.rs        # Re-exports — public face of the cryptography layer
@@ -578,6 +580,37 @@ The `⚠` skipped lines are written to **stdout** (not stderr) because they are
 informational — they describe a successful partial operation, not an error. The only
 message written to stderr is `format_cli_error` output, which happens in `run()` when
 a command returns `Err(...)`.
+
+### 8.5 `envy diff` — transient data model and `Result<bool, CliError>`
+
+`envy diff` is the only `cmd_*` handler that returns `Result<bool, CliError>` instead of
+`Result<(), CliError>`. The `bool` represents "differences found" — not an error — and maps
+to exit code 1 (following the `diff(1)` convention). The dispatch in `run()` maps:
+
+```rust
+Commands::Diff { env, reveal } => {
+    match commands::cmd_diff(...) {
+        Ok(has_diff) => if has_diff { 1 } else { 0 },
+        Err(e) => { eprintln!(...); cli_exit_code(&e) }
+    }
+}
+```
+
+**Architecture**: The diff uses a fully transient data model — no new tables, no schema
+migration. `compute_diff()` in `src/core/diff.rs` is a pure function (no I/O) that
+accepts two `BTreeMap<String, Zeroizing<String>>` inputs and returns a `DiffReport`. The
+CLI layer is responsible for fetching both sides (vault via `core::get_env_secrets`,
+artifact via `core::unseal_env`) and rendering the result.
+
+**Passphrase disambiguation**: `unseal_env` returns `Ok(None)` for both "environment not
+in artifact" and "wrong passphrase". To distinguish these cases, `cmd_diff` checks
+`artifact.environments.contains_key(env_name)` *before* calling `unseal_env`. If the key
+is absent, the passphrase prompt is skipped entirely. If present and `unseal_env` returns
+`None`, it is an authentication failure.
+
+**Color output**: Unlike `cmd_status` (which uses `comfy-table`), `cmd_diff` uses inline
+ANSI escape codes (`\x1b[32m` green, `\x1b[31m` red, `\x1b[33m` yellow) with `NO_COLOR`
+and `IsTerminal` detection. No new crate was added.
 
 ---
 

@@ -165,6 +165,27 @@ pub enum Commands {
         env: String,
     },
 
+    /// Compare local vault secrets against the sealed envy.enc artifact.
+    ///
+    /// Shows additions, deletions, and modifications for one environment.
+    /// By default only key names are shown — use `--reveal` to include values.
+    /// Exit code 0 = no differences, 1 = differences found, 2+ = error.
+    #[command(visible_alias = "df")]
+    Diff {
+        /// Target environment (default: development).
+        #[arg(
+            short = 'e',
+            long = "env",
+            value_name = "ENV",
+            default_value = "development"
+        )]
+        env: String,
+
+        /// Show decrypted secret values in the output.
+        #[arg(long)]
+        reveal: bool,
+    },
+
     /// Show sync status of all vault environments.
     ///
     /// Displays a table of environments with secret count, last-modified time,
@@ -386,6 +407,31 @@ pub fn run() -> i32 {
         Commands::Export { env } => {
             match commands::cmd_export(&vault, &master_key, &project_id, &env, cli.format) {
                 Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("{}", format_cli_error(&e));
+                    cli_exit_code(&e)
+                }
+            }
+        }
+
+        Commands::Diff { env, reveal } => {
+            let artifact = artifact_path(&manifest_path);
+            match commands::cmd_diff(
+                &vault,
+                &master_key,
+                &project_id,
+                &env,
+                &artifact,
+                cli.format,
+                reveal,
+            ) {
+                Ok(has_diff) => {
+                    if has_diff {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 Err(e) => {
                     eprintln!("{}", format_cli_error(&e));
                     cli_exit_code(&e)

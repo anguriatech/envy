@@ -52,6 +52,14 @@ pub enum CliError {
     #[error("no environments could be decrypted \u{2014} check your passphrase")]
     NothingImported,
 
+    /// Target environment not found in vault or artifact.
+    #[error("environment '{0}' not found in vault or artifact")]
+    EnvNotFound(String),
+
+    /// Artifact exists but is malformed or uses an unsupported version.
+    #[error("envy.enc is unreadable: {0}")]
+    ArtifactUnreadable(String),
+
     /// A core-layer error surfaced through a CLI command that returns `CliError`.
     #[error("{0}")]
     Core(#[from] crate::core::CoreError),
@@ -126,6 +134,8 @@ pub fn cli_exit_code(e: &CliError) -> i32 {
         CliError::VaultOpen(_) => 4,
         CliError::PassphraseInput(_) => 2,
         CliError::NothingImported => 1,
+        CliError::EnvNotFound(_) => 3,
+        CliError::ArtifactUnreadable(_) => 5,
         CliError::Core(e) => core_exit_code(e),
         CliError::Output(_) => 1,
     }
@@ -185,6 +195,26 @@ mod tests {
             cli_exit_code(&CliError::PassphraseInput("some error".into())),
             2,
             "PassphraseInput must map to exit code 2"
+        );
+    }
+
+    // T011 — contract test from contracts/diff-command.md
+    #[test]
+    fn env_not_found_maps_to_exit_code_3() {
+        assert_eq!(
+            cli_exit_code(&CliError::EnvNotFound("staging".into())),
+            3,
+            "EnvNotFound must map to exit code 3"
+        );
+    }
+
+    // T012 — contract test from contracts/diff-command.md
+    #[test]
+    fn artifact_unreadable_maps_to_exit_code_5() {
+        assert_eq!(
+            cli_exit_code(&CliError::ArtifactUnreadable("malformed JSON".into())),
+            5,
+            "ArtifactUnreadable must map to exit code 5"
         );
     }
 
