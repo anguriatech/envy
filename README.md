@@ -22,8 +22,9 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/anguriatech/envy/releas
 
 ---
 
-<!-- Replace with a demo GIF -->
-<!-- ![Envy demo](docs/assets/demo.gif) -->
+<div align="center">
+  <video src="docs/assets/HeroWorkflow.mp4" autoplay loop muted playsinline width="70%"></video>
+</div>
 
 ---
 
