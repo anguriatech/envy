@@ -10,6 +10,7 @@
 #   5. Machine-Readable Output Formats (--format flag)
 #   6. Multi-Env Headless Encryption with Smart Merge (FR-001, FR-005, SC-002)
 #   8. Sync Status Command (FR-001–FR-008, US1–US4)
+#   9. Pre-Encrypt Secret Diff (011-envy-diff)
 #
 # Requirements:
 #   - `envy` binary built or passed via ENVY_BIN env var
@@ -604,6 +605,80 @@ echo -e "${YELLOW}  [S8] US1: 'envy st' alias works...${RESET}"
 S8_ALIAS_EXIT=0
 (cd "$S8_DIR" && "$ENVY" st 2>&1) || S8_ALIAS_EXIT=$?
 assert_eq "envy st alias exits 0" "0" "$S8_ALIAS_EXIT"
+
+# =============================================================================
+# Scenario 9: envy diff round-trip (011-envy-diff)
+# =============================================================================
+section "Scenario 9 — Pre-Encrypt Secret Diff"
+
+S9_DIR="$WORKSPACE/scenario9"
+
+# ── Setup: init, set 3 secrets, encrypt ──────────────────────────────────────
+echo -e "${YELLOW}  [S9] Setup: init + set + encrypt...${RESET}"
+init_project "$S9_DIR"
+(cd "$S9_DIR" && "$ENVY" set 'A=alpha')
+(cd "$S9_DIR" && "$ENVY" set 'B=bravo')
+(cd "$S9_DIR" && "$ENVY" set 'C=charlie')
+(cd "$S9_DIR" && ENVY_PASSPHRASE_DEVELOPMENT='diff-pass' "$ENVY" encrypt -e development < /dev/null)
+
+# ── Drift: add D, modify B, remove C ────────────────────────────────────────
+echo -e "${YELLOW}  [S9] Creating drift: add D, modify B, remove C...${RESET}"
+(cd "$S9_DIR" && "$ENVY" set 'D=delta')
+(cd "$S9_DIR" && "$ENVY" set 'B=bravo2')
+(cd "$S9_DIR" && "$ENVY" rm C)
+
+# ── envy diff (table) — expect exit code 1 ──────────────────────────────────
+echo -e "${YELLOW}  [S9] envy diff — expect differences (exit 1)...${RESET}"
+S9_DIFF_EXIT=0
+S9_DIFF_OUT=$(cd "$S9_DIR" && ENVY_PASSPHRASE_DEVELOPMENT='diff-pass' "$ENVY" diff -e development 2>/dev/null) || S9_DIFF_EXIT=$?
+assert_eq "envy diff exits 1 when differences exist" "1" "$S9_DIFF_EXIT"
+
+# ── envy diff --format json — parse with jq ─────────────────────────────────
+echo -e "${YELLOW}  [S9] envy diff --format json — verify counts...${RESET}"
+S9_JSON_EXIT=0
+S9_JSON=$(cd "$S9_DIR" && ENVY_PASSPHRASE_DEVELOPMENT='diff-pass' "$ENVY" diff -e development --format json 2>/dev/null) || S9_JSON_EXIT=$?
+assert_eq "envy diff --format json exits 1" "1" "$S9_JSON_EXIT"
+
+S9_ADDED=$(echo "$S9_JSON" | jq '.summary.added')
+S9_REMOVED=$(echo "$S9_JSON" | jq '.summary.removed')
+S9_MODIFIED=$(echo "$S9_JSON" | jq '.summary.modified')
+S9_TOTAL=$(echo "$S9_JSON" | jq '.summary.total')
+
+assert_eq "JSON summary.added == 1" "1" "$S9_ADDED"
+assert_eq "JSON summary.removed == 1" "1" "$S9_REMOVED"
+assert_eq "JSON summary.modified == 1" "1" "$S9_MODIFIED"
+assert_eq "JSON summary.total == 3" "3" "$S9_TOTAL"
+
+# ── Verify no old_value/new_value without --reveal ──────────────────────────
+echo -e "${YELLOW}  [S9] No reveal — old_value/new_value must be absent...${RESET}"
+S9_HAS_OLD=$(echo "$S9_JSON" | jq '[.changes[] | has("old_value")] | any')
+S9_HAS_NEW=$(echo "$S9_JSON" | jq '[.changes[] | has("new_value")] | any')
+assert_eq "old_value absent without --reveal" "false" "$S9_HAS_OLD"
+assert_eq "new_value absent without --reveal" "false" "$S9_HAS_NEW"
+
+# ── Re-encrypt to bring vault in sync ───────────────────────────────────────
+echo -e "${YELLOW}  [S9] Re-encrypt to sync...${RESET}"
+(cd "$S9_DIR" && ENVY_PASSPHRASE_DEVELOPMENT='diff-pass' "$ENVY" encrypt -e development < /dev/null)
+
+# ── envy diff — expect exit code 0 (no differences) ────────────────────────
+echo -e "${YELLOW}  [S9] envy diff after re-encrypt — expect no differences (exit 0)...${RESET}"
+S9_CLEAN_EXIT=0
+(cd "$S9_DIR" && ENVY_PASSPHRASE_DEVELOPMENT='diff-pass' "$ENVY" diff -e development 2>/dev/null) || S9_CLEAN_EXIT=$?
+assert_eq "envy diff exits 0 when no differences" "0" "$S9_CLEAN_EXIT"
+
+# ── envy diff --format json — empty changes ─────────────────────────────────
+echo -e "${YELLOW}  [S9] envy diff --format json after sync — has_differences == false...${RESET}"
+S9_CLEAN_JSON=$(cd "$S9_DIR" && ENVY_PASSPHRASE_DEVELOPMENT='diff-pass' "$ENVY" diff -e development --format json 2>/dev/null)
+S9_HAS_DIFF=$(echo "$S9_CLEAN_JSON" | jq '.has_differences')
+S9_CHANGES_LEN=$(echo "$S9_CLEAN_JSON" | jq '.changes | length')
+assert_eq "has_differences is false" "false" "$S9_HAS_DIFF"
+assert_eq "changes array is empty" "0" "$S9_CHANGES_LEN"
+
+# ── envy df alias works ────────────────────────────────────────────────────
+echo -e "${YELLOW}  [S9] 'envy df' alias works...${RESET}"
+S9_DF_EXIT=0
+(cd "$S9_DIR" && ENVY_PASSPHRASE_DEVELOPMENT='diff-pass' "$ENVY" df -e development 2>/dev/null) || S9_DF_EXIT=$?
+assert_eq "envy df alias exits 0" "0" "$S9_DF_EXIT"
 
 # =============================================================================
 # Summary

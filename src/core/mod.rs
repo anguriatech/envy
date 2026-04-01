@@ -5,12 +5,14 @@
 //! - MUST NOT import from `crate::cli`.
 //! - MAY import from `crate::db` and `crate::crypto` only.
 
+pub mod diff;
 mod error;
 mod manifest;
 mod ops;
 pub mod status;
 pub mod sync;
 
+pub use diff::{ChangeType, DiffEntry, DiffReport, compute_diff};
 pub use error::CoreError;
 pub use manifest::{Manifest, create_manifest, find_manifest};
 pub use ops::{

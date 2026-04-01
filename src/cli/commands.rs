@@ -1183,6 +1183,258 @@ pub(super) fn cmd_status(
 }
 
 // ---------------------------------------------------------------------------
+// T014 — Color helpers for diff output
+// ---------------------------------------------------------------------------
+
+/// Returns `true` if ANSI color output is enabled.
+///
+/// Color is suppressed when `NO_COLOR` is set (no-color.org convention) or
+/// stdout is not a terminal (piped/redirected output).
+fn is_color_enabled() -> bool {
+    use std::io::IsTerminal;
+    std::env::var("NO_COLOR").is_err() && std::io::stdout().is_terminal()
+}
+
+/// Wraps `text` in ANSI escape sequences when color is enabled.
+///
+/// `ansi` is the SGR code (e.g. `"32"` for green, `"31"` for red, `"33"` for yellow).
+fn colorize(text: &str, ansi: &str) -> String {
+    if is_color_enabled() {
+        format!("\x1b[{ansi}m{text}\x1b[0m")
+    } else {
+        text.to_string()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// T015–T016 — Table renderer for diff output
+// ---------------------------------------------------------------------------
+
+/// Renders the diff report as a human-readable table to stdout.
+///
+/// Output format follows contracts/diff-command.md §Standard Output — Table Format.
+fn render_diff_table(
+    report: &crate::core::DiffReport,
+    reveal: bool,
+    artifact_missing: bool,
+    env_not_in_artifact: bool,
+) {
+    use crate::core::ChangeType;
+
+    if !report.has_differences() {
+        println!("envy diff: {} \u{2014} no differences", report.env_name);
+        return;
+    }
+
+    println!("envy diff: {} (vault \u{2194} envy.enc)", report.env_name);
+
+    if artifact_missing {
+        println!("Note: envy.enc not found \u{2014} all vault secrets shown as additions.");
+    } else if env_not_in_artifact {
+        println!(
+            "Note: environment '{}' not found in envy.enc \u{2014} all vault secrets shown as additions.",
+            report.env_name
+        );
+    }
+
+    println!();
+
+    for entry in &report.entries {
+        let (symbol, ansi) = match entry.change {
+            ChangeType::Added => ("+", "32"),
+            ChangeType::Removed => ("-", "31"),
+            ChangeType::Modified => ("~", "33"),
+        };
+        println!("  {}", colorize(&format!("{symbol} {}", entry.key), ansi));
+
+        if reveal {
+            match entry.change {
+                ChangeType::Added => {
+                    if let Some(ref v) = entry.new_value {
+                        println!("    vault:    {}", **v);
+                    }
+                }
+                ChangeType::Removed => {
+                    if let Some(ref v) = entry.old_value {
+                        println!("    artifact: {}", **v);
+                    }
+                }
+                ChangeType::Modified => {
+                    if let Some(ref v) = entry.old_value {
+                        println!("    artifact: {}", **v);
+                    }
+                    if let Some(ref v) = entry.new_value {
+                        println!("    vault:    {}", **v);
+                    }
+                }
+            }
+            println!();
+        }
+    }
+
+    let total = report.total();
+    let label = if total == 1 { "change" } else { "changes" };
+    println!(
+        "{total} {label}: {} added, {} removed, {} modified",
+        report.added, report.removed, report.modified
+    );
+}
+
+// ---------------------------------------------------------------------------
+// T017 — JSON writer for diff output
+// ---------------------------------------------------------------------------
+
+/// Serializes the diff report as JSON to `writer`.
+///
+/// When `reveal` is false, the `old_value`/`new_value` keys are entirely absent
+/// from each change entry (not null — absent). See research.md R5.
+fn write_diff_json(
+    report: &crate::core::DiffReport,
+    env_name: &str,
+    reveal: bool,
+    writer: &mut impl std::io::Write,
+) -> Result<(), CliError> {
+    use crate::core::ChangeType;
+
+    let changes: Vec<serde_json::Value> = report
+        .entries
+        .iter()
+        .map(|e| {
+            let type_str = match e.change {
+                ChangeType::Added => "added",
+                ChangeType::Removed => "removed",
+                ChangeType::Modified => "modified",
+            };
+            let mut entry = serde_json::json!({
+                "key": e.key,
+                "type": type_str,
+            });
+            if reveal {
+                entry["old_value"] = match &e.old_value {
+                    Some(v) => serde_json::Value::String(v.to_string()),
+                    None => serde_json::Value::Null,
+                };
+                entry["new_value"] = match &e.new_value {
+                    Some(v) => serde_json::Value::String(v.to_string()),
+                    None => serde_json::Value::Null,
+                };
+            }
+            entry
+        })
+        .collect();
+
+    let output = serde_json::json!({
+        "environment": env_name,
+        "has_differences": report.has_differences(),
+        "summary": {
+            "added": report.added,
+            "removed": report.removed,
+            "modified": report.modified,
+            "total": report.total(),
+        },
+        "changes": changes,
+    });
+
+    serde_json::to_writer_pretty(&mut *writer, &output)
+        .map_err(|e| CliError::Output(e.to_string()))?;
+    writeln!(writer).map_err(|e| CliError::Output(e.to_string()))?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// T022 — cmd_diff handler
+// ---------------------------------------------------------------------------
+
+/// Compares vault secrets against the sealed `envy.enc` artifact for one environment.
+///
+/// Returns `Ok(true)` if differences were found (exit 1), `Ok(false)` if clean (exit 0).
+/// This is the only `cmd_*` handler that returns `Result<bool, CliError>` — see research.md R4.
+pub(super) fn cmd_diff(
+    vault: &Vault,
+    master_key: &[u8; 32],
+    project_id: &ProjectId,
+    env_name: &str,
+    artifact_path: &Path,
+    format: OutputFormat,
+    reveal: bool,
+) -> Result<bool, CliError> {
+    use std::collections::BTreeMap;
+
+    // Step 1 — Vault side: fetch secrets, convert HashMap → BTreeMap.
+    let vault_map: BTreeMap<String, zeroize::Zeroizing<String>> =
+        crate::core::get_env_secrets(vault, master_key, project_id, env_name)
+            .map_err(CliError::Core)?
+            .into_iter()
+            .collect();
+
+    // Step 2 — Artifact side: read envy.enc.
+    let mut artifact_map: BTreeMap<String, zeroize::Zeroizing<String>> = BTreeMap::new();
+    let mut artifact_missing = false;
+    let mut env_not_in_artifact = false;
+
+    match crate::core::read_artifact(artifact_path) {
+        Err(crate::core::SyncError::FileNotFound(_)) => {
+            artifact_missing = true;
+        }
+        Err(e) => {
+            return Err(CliError::ArtifactUnreadable(e.to_string()));
+        }
+        Ok(artifact) => {
+            if artifact.environments.contains_key(env_name) {
+                // Step 3 — Resolve passphrase and unseal.
+                let passphrase = match resolve_passphrase_for_env(env_name, false, None)? {
+                    Some(p) => p,
+                    None => {
+                        return Err(CliError::PassphraseInput(
+                            "no passphrase available (no TTY and no ENVY_PASSPHRASE* env var)"
+                                .into(),
+                        ));
+                    }
+                };
+                match crate::core::unseal_env(&artifact, env_name, passphrase.as_ref())
+                    .map_err(|e| CliError::VaultOpen(e.to_string()))?
+                {
+                    Some(secrets) => {
+                        artifact_map = secrets;
+                    }
+                    None => {
+                        return Err(CliError::PassphraseInput(format!(
+                            "incorrect passphrase for environment '{env_name}'"
+                        )));
+                    }
+                }
+            } else {
+                env_not_in_artifact = true;
+            }
+        }
+    }
+
+    // Step 4 — Both sides empty → env not found anywhere.
+    if vault_map.is_empty() && artifact_map.is_empty() && !artifact_missing && !env_not_in_artifact
+    {
+        return Err(CliError::EnvNotFound(env_name.to_string()));
+    }
+
+    // Step 5 — Compute diff.
+    let report = crate::core::compute_diff(env_name, vault_map, artifact_map);
+
+    // Step 6 — Render.
+    if reveal {
+        eprintln!("\u{26a0} Warning: secret values are visible in the output below.");
+        eprintln!();
+    }
+
+    if format == OutputFormat::Json {
+        write_diff_json(&report, env_name, reveal, &mut std::io::stdout())?;
+    } else {
+        render_diff_table(&report, reveal, artifact_missing, env_not_in_artifact);
+    }
+
+    // Step 7 — Return whether differences were found.
+    Ok(report.has_differences())
+}
+
+// ---------------------------------------------------------------------------
 // T008–T011, T022–T023 — Unit tests (written FIRST per TDD discipline)
 // ---------------------------------------------------------------------------
 
@@ -2271,5 +2523,150 @@ mod tests {
             "whitespace ENVY_PASSPHRASE must return PassphraseInput, got: {:?}",
             result.err()
         );
+    }
+
+    // -------------------------------------------------------------------
+    // T018–T021 — JSON diff writer unit tests
+    // -------------------------------------------------------------------
+
+    /// Helper: build a DiffReport from entries.
+    fn make_diff_report(
+        entries: Vec<(&str, crate::core::ChangeType, Option<&str>, Option<&str>)>,
+    ) -> crate::core::DiffReport {
+        use crate::core::{DiffEntry, DiffReport};
+        use zeroize::Zeroizing;
+
+        let mut added = 0usize;
+        let mut removed = 0usize;
+        let mut modified = 0usize;
+        let diff_entries: Vec<DiffEntry> = entries
+            .into_iter()
+            .map(|(key, change, old, new)| {
+                match change {
+                    crate::core::ChangeType::Added => added += 1,
+                    crate::core::ChangeType::Removed => removed += 1,
+                    crate::core::ChangeType::Modified => modified += 1,
+                }
+                DiffEntry {
+                    key: key.to_string(),
+                    change,
+                    old_value: old.map(|v| Zeroizing::new(v.to_string())),
+                    new_value: new.map(|v| Zeroizing::new(v.to_string())),
+                }
+            })
+            .collect();
+
+        DiffReport {
+            env_name: "development".to_string(),
+            entries: diff_entries,
+            added,
+            removed,
+            modified,
+        }
+    }
+
+    // T018
+    #[test]
+    fn diff_json_no_reveal() {
+        use crate::core::ChangeType;
+
+        let report = make_diff_report(vec![
+            ("API_KEY", ChangeType::Added, None, Some("secret")),
+            ("DB_URL", ChangeType::Modified, Some("old"), Some("new")),
+        ]);
+
+        let mut buf = Vec::new();
+        super::write_diff_json(&report, "development", false, &mut buf).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+
+        assert_eq!(json["has_differences"], true);
+        assert_eq!(json["summary"]["total"], 2);
+
+        for change in json["changes"].as_array().unwrap() {
+            assert!(
+                change.get("old_value").is_none(),
+                "old_value must be absent without --reveal"
+            );
+            assert!(
+                change.get("new_value").is_none(),
+                "new_value must be absent without --reveal"
+            );
+        }
+    }
+
+    // T019
+    #[test]
+    fn diff_json_with_reveal() {
+        use crate::core::ChangeType;
+
+        let report = make_diff_report(vec![
+            ("API_KEY", ChangeType::Added, None, Some("secret")),
+            ("DB_URL", ChangeType::Modified, Some("old"), Some("new")),
+            ("OLD_KEY", ChangeType::Removed, Some("removed_val"), None),
+        ]);
+
+        let mut buf = Vec::new();
+        super::write_diff_json(&report, "development", true, &mut buf).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+
+        let changes = json["changes"].as_array().unwrap();
+
+        // Added: old_value = null, new_value = "secret"
+        let added = changes.iter().find(|c| c["type"] == "added").unwrap();
+        assert_eq!(added["old_value"], serde_json::Value::Null);
+        assert_eq!(added["new_value"], "secret");
+
+        // Modified: both present
+        let modified = changes.iter().find(|c| c["type"] == "modified").unwrap();
+        assert_eq!(modified["old_value"], "old");
+        assert_eq!(modified["new_value"], "new");
+
+        // Removed: new_value = null
+        let removed = changes.iter().find(|c| c["type"] == "removed").unwrap();
+        assert_eq!(removed["old_value"], "removed_val");
+        assert_eq!(removed["new_value"], serde_json::Value::Null);
+    }
+
+    // T020
+    #[test]
+    fn diff_json_no_differences() {
+        let report = make_diff_report(vec![]);
+
+        let mut buf = Vec::new();
+        super::write_diff_json(&report, "development", false, &mut buf).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+
+        assert_eq!(json["has_differences"], false);
+        assert_eq!(json["changes"].as_array().unwrap().len(), 0);
+        assert_eq!(json["summary"]["added"], 0);
+        assert_eq!(json["summary"]["removed"], 0);
+        assert_eq!(json["summary"]["modified"], 0);
+        assert_eq!(json["summary"]["total"], 0);
+    }
+
+    // T021
+    #[test]
+    fn diff_json_type_strings() {
+        use crate::core::ChangeType;
+
+        let report = make_diff_report(vec![
+            ("A", ChangeType::Added, None, Some("v")),
+            ("B", ChangeType::Modified, Some("old"), Some("new")),
+            ("C", ChangeType::Removed, Some("v"), None),
+        ]);
+
+        let mut buf = Vec::new();
+        super::write_diff_json(&report, "development", false, &mut buf).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+
+        let types: Vec<&str> = json["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["type"].as_str().unwrap())
+            .collect();
+        assert!(types.contains(&"added"), "must contain 'added'");
+        assert!(types.contains(&"removed"), "must contain 'removed'");
+        assert!(types.contains(&"modified"), "must contain 'modified'");
     }
 }
