@@ -15,7 +15,11 @@ No SaaS. No internet. No plaintext — ever.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/anguriatech/envy/releases/latest/download/envy-installer.sh | sh
+brew install anguriatech/tap/envy
+```
+
+```bash
+npm install -g @anguriatech/envy
 ```
 
 </div>
@@ -112,8 +116,16 @@ Set `ENVY_PASSPHRASE_<ENV>` in your pipeline's secret store. Envy detects it and
 **Step 1 — Install and initialise**
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/anguriatech/envy/releases/latest/download/envy-installer.sh | sh
+# Homebrew (macOS & Linux)
+brew install anguriatech/tap/envy
 
+# NPM (all platforms)
+npm install -g @anguriatech/envy
+```
+
+> Windows, curl, or build-from-source? See the [Installation](#installation) section below.
+
+```bash
 cd my-project
 envy init       # creates envy.toml (safe to commit)
 ```
