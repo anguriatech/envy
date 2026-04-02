@@ -169,3 +169,17 @@ jobs:
           $RESULT = envy get DB_PASS -e production
           if ($RESULT -ne "secret123") { throw "ERROR: got [$RESULT], expected [secret123]" }
           Write-Host "Smoke test PASSED on Windows"
+
+      # -----------------------------------------------------------------------
+      # Distribution channel smoke tests — verify the published packages resolve
+      # and execute correctly from their respective registries.
+      # -----------------------------------------------------------------------
+      - name: Smoke test NPM distribution
+        run: npx --yes @anguriatech/envy --version
+
+      - name: Smoke test Homebrew tap
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install anguriatech/tap/envy
+          envy --version

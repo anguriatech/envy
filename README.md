@@ -390,7 +390,21 @@ Note: `envy diff` follows the `diff(1)` convention — exit 1 means "differences
 
 ## Installation
 
-**macOS & Linux**
+**Homebrew (macOS & Linux)**
+
+```bash
+brew install anguriatech/tap/envy
+```
+
+**NPM (Cross-platform wrapper)**
+
+```bash
+npm install -g @anguriatech/envy
+# or run without installing:
+npx @anguriatech/envy
+```
+
+**macOS & Linux (shell installer)**
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/anguriatech/envy/releases/latest/download/envy-installer.sh | sh
