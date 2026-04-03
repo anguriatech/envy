@@ -5,16 +5,16 @@ Set Shell         bash
 Set Width         1100
 Set Height        520
 Set FontFamily    "Fira Code"
-Set FontSize      15
+Set FontSize      18
 Set TypingSpeed   65ms
-Set Theme         "TokyoNight"
+Set Theme         "Catppuccin Mocha"
 Set WindowBar     Colorful
 Set WindowBarSize 40
 Set BorderRadius  12
 Set Margin        20
-Set MarginFill    "#1a1b26"
+Set MarginFill    "#4b4b65"
 Set Padding       20
-Set Framerate     30
+Set Framerate     50
 Set LoopOffset    80%
 
 # Require AFTER all Set directives (rule: deps-require-order)
