@@ -26,8 +26,9 @@ npm install -g @anguriatech/envy
 
 ---
 
-<!-- Replace with a demo GIF -->
-<!-- ![Envy demo](docs/assets/demo.gif) -->
+<div align="center">
+  <img src="docs/assets/demo.gif" alt="Envy demo" width="100%" />
+</div>
 
 ---
 
