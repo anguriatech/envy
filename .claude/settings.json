@@ -21,7 +21,17 @@
       "Bash(.specify/scripts/bash/create-new-feature.sh \"Multi-environment encryption and smart merging for envy encrypt command\" --json --short-name \"multi-env-encrypt\")",
       "Bash(cargo audit:*)",
       "Bash(.specify/scripts/bash/create-new-feature.sh \"envy diff — Pre-encrypt secret comparison command. Compares decrypted local vault secrets against the currently sealed envy.enc artifact for a specific environment, showing Git-like additions, deletions, and modifications BEFORE the user runs envy encrypt.\" --json --short-name \"envy-diff\")",
-      "Read(//home/oriolgv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo-dist-0.31.0/src/config/**)"
+      "Read(//home/oriolgv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cargo-dist-0.31.0/src/config/**)",
+      "Bash(npx skills:*)",
+      "WebFetch(domain:skills.sh)",
+      "Read(//home/oriolgv/.agents/skills/vhs/**)",
+      "Bash(fc-list)",
+      "Read(//usr/local/**)",
+      "Bash(vhs --help)",
+      "Bash(vhs themes:*)",
+      "Bash(apt-cache show:*)",
+      "Bash(sudo apt-get:*)",
+      "Bash(fc-list :spacing=mono family)"
     ]
   }
 }
