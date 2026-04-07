@@ -315,6 +315,18 @@ pub fn run() -> i32 {
 
     let project_id = crate::db::ProjectId(manifest.project_id.clone());
 
+    // Ensure the project row exists for the UUID in envy.toml. On fresh runners the
+    // vault.db is empty, so the FK on environments/secrets would fail without this.
+    let project_name = cwd
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_owned();
+    if let Err(e) = vault.ensure_project(&project_id, &project_name) {
+        eprintln!("error: cannot register project in vault: {e}");
+        return 4;
+    }
+
     match cli.command {
         Commands::Init => unreachable!("Init is handled above"),
 
