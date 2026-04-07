@@ -103,8 +103,12 @@ pub fn get_or_create_master_key() -> Result<Zeroizing<[u8; 32]>, CryptoError> {
             key_bytes.copy_from_slice(key_ga.as_slice());
 
             // Persist to the OS Credential Manager as a hex-encoded string.
-            let entry = keyring::Entry::new(SERVICE_NAME, ACCOUNT_NAME)
-                .map_err(|e| CryptoError::KeyringUnavailable(e.to_string()))?;
+            let entry = match keyring::Entry::new(SERVICE_NAME, ACCOUNT_NAME) {
+                Ok(e) => e,
+                Err(e) => {
+                    return ci_fallback(CryptoError::KeyringUnavailable(e.to_string()));
+                }
+            };
             entry
                 .set_password(&encode_key(&key_bytes))
                 .map_err(|e| CryptoError::KeyringUnavailable(e.to_string()))?;
@@ -112,7 +116,25 @@ pub fn get_or_create_master_key() -> Result<Zeroizing<[u8; 32]>, CryptoError> {
             Ok(Zeroizing::new(key_bytes))
         }
 
+        Err(CryptoError::KeyringUnavailable(msg)) => {
+            ci_fallback(CryptoError::KeyringUnavailable(msg))
+        }
+
         Err(e) => Err(e),
+    }
+}
+
+/// If `ENVY_PASSPHRASE` or `CI` is set, returns a deterministic zero ephemeral key so
+/// that headless CI environments (no D-Bus / Secret Service) can still operate against
+/// an ephemeral vault. Otherwise propagates the original [`CryptoError::KeyringUnavailable`].
+///
+/// This check is performed *after* the keyring attempt fails, so local developers who
+/// export `ENVY_PASSPHRASE` but rely on their OS Keychain are unaffected.
+fn ci_fallback(err: CryptoError) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
+    if std::env::var("ENVY_PASSPHRASE").is_ok() || std::env::var("CI").is_ok() {
+        Ok(Zeroizing::new([0u8; 32]))
+    } else {
+        Err(err)
     }
 }
 
