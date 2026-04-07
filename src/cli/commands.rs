@@ -71,12 +71,8 @@ pub(super) fn cmd_init() -> Result<(), CliError> {
     let master_key = crate::crypto::get_or_create_master_key()
         .map_err(|e| CliError::VaultOpen(e.to_string()))?;
 
-    // Step 3 — Ensure the vault directory exists, then open (or create) the vault.
+    // Step 3 — Open (or create) the vault; directory is guaranteed by run().
     let vault_path = super::vault_path();
-    if let Some(vault_dir) = vault_path.parent() {
-        std::fs::create_dir_all(vault_dir)
-            .map_err(|e| CliError::VaultOpen(format!("cannot create vault directory: {e}")))?;
-    }
     let vault = Vault::open(&vault_path, master_key.as_ref())
         .map_err(|e| CliError::VaultOpen(e.to_string()))?;
 

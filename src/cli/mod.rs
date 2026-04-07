@@ -297,7 +297,15 @@ pub fn run() -> i32 {
         }
     };
 
-    let vault = match crate::db::Vault::open(&vault_path(), master_key.as_ref()) {
+    let vp = vault_path();
+    if let Some(vault_dir) = vp.parent() {
+        if let Err(e) = std::fs::create_dir_all(vault_dir) {
+            eprintln!("error: cannot create vault directory: {e}");
+            return 4;
+        }
+    }
+
+    let vault = match crate::db::Vault::open(&vp, master_key.as_ref()) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("{}", format_cli_error(&CliError::VaultOpen(e.to_string())));
