@@ -31,7 +31,8 @@
       "Bash(vhs themes:*)",
       "Bash(apt-cache show:*)",
       "Bash(sudo apt-get:*)",
-      "Bash(fc-list :spacing=mono family)"
+      "Bash(fc-list :spacing=mono family)",
+      "Bash(bash .specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks)"
     ]
   }
 }
