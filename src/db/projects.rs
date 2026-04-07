@@ -30,6 +30,22 @@ pub struct Project {
 }
 
 impl Vault {
+    /// Ensures a project with the given `id` exists, inserting it if absent.
+    ///
+    /// Uses `INSERT OR IGNORE` so repeated calls are safe (idempotent). This is
+    /// the correct method for GitOps/CI flows where the vault is created fresh
+    /// from an auto-initialised `~/.envy/vault.db` but the project UUID already
+    /// exists in the committed `envy.toml`.
+    pub fn ensure_project(&self, id: &ProjectId, name: &str) -> Result<(), DbError> {
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, name) VALUES (?1, ?2)",
+                params![id.as_str(), name],
+            )
+            .map_err(map_rusqlite_error)?;
+        Ok(())
+    }
+
     /// Creates a new project record and returns its generated [`ProjectId`].
     ///
     /// A new UUID v4 is generated for every call. Project names are not required

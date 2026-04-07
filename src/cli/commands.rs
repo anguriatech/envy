@@ -868,10 +868,14 @@ pub(super) fn cmd_decrypt(
         return Err(CliError::NothingImported);
     }
 
-    // Step 4 — Upsert all imported secrets; individual failures are warnings, not errors.
+    // Step 4 — Upsert all imported secrets; track per-env success count.
+    // Individual failures are warnings, not errors (partial import is still useful).
+    let mut upserted_counts: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
     for (env_name, secrets) in &imported {
+        let mut ok = 0usize;
         for (key, value) in secrets {
-            if let Err(e) = crate::core::set_secret(
+            match crate::core::set_secret(
                 vault,
                 master_key,
                 project_id,
@@ -879,21 +883,24 @@ pub(super) fn cmd_decrypt(
                 key,
                 value.as_ref(),
             ) {
-                eprintln!("warning: failed to upsert {env_name}/{key}: {e}");
+                Ok(()) => ok += 1,
+                Err(e) => eprintln!("warning: failed to upsert {env_name}/{key}: {e}"),
             }
         }
+        upserted_counts.insert(env_name.clone(), ok);
     }
 
     // Step 5 — Print success header.
     println!("Imported {} environment(s) from envy.enc", imported.len());
 
     // Step 6 — Progressive Disclosure: green ✓ for imported, yellow ⚠ dim for skipped.
-    for (env_name, secrets) in &imported {
+    for env_name in imported.keys() {
+        let ok = upserted_counts.get(env_name).copied().unwrap_or(0);
         println!(
             "  {}  {} ({} secret(s) upserted)",
             dialoguer::console::style("\u{2713}").green(),
             env_name,
-            secrets.len()
+            ok
         );
     }
     for env_name in &skipped {
