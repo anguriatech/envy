@@ -260,6 +260,14 @@ pub fn run() -> i32 {
         return 0;
     }
 
+    // --- Ensure ~/.envy/ exists for every command (including Init). ---
+    if let Some(vault_dir) = vault_path().parent() {
+        if let Err(e) = std::fs::create_dir_all(vault_dir) {
+            eprintln!("error: cannot create vault directory: {e}");
+            return 4;
+        }
+    }
+
     // --- Init is special: it manages its own vault lifecycle. ---
     if let Commands::Init = &cli.command {
         return match commands::cmd_init() {
@@ -298,13 +306,6 @@ pub fn run() -> i32 {
     };
 
     let vp = vault_path();
-    if let Some(vault_dir) = vp.parent() {
-        if let Err(e) = std::fs::create_dir_all(vault_dir) {
-            eprintln!("error: cannot create vault directory: {e}");
-            return 4;
-        }
-    }
-
     let vault = match crate::db::Vault::open(&vp, master_key.as_ref()) {
         Ok(v) => v,
         Err(e) => {
