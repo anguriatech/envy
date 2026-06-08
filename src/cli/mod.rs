@@ -343,7 +343,11 @@ pub fn run() -> i32 {
     match cli.command {
         Commands::Init => unreachable!("Init is handled above"),
 
-        Commands::Set { assignment, stdin, env } => {
+        Commands::Set {
+            assignment,
+            stdin,
+            env,
+        } => {
             let env = env.as_deref().unwrap_or("");
             if stdin {
                 let mut value = String::new();
@@ -351,7 +355,8 @@ pub fn run() -> i32 {
                     eprintln!("error: cannot read value from stdin: {e}");
                     return 4;
                 }
-                match commands::cmd_set(&vault, &master_key, &project_id, env, &assignment, &value) {
+                match commands::cmd_set(&vault, &master_key, &project_id, env, &assignment, &value)
+                {
                     Ok(()) => 0,
                     Err(e) => {
                         eprintln!("{}", format_core_error(&e));
