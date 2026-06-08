@@ -300,7 +300,7 @@ Every secret value travels through the codebase in `zeroize::Zeroizing<String>`.
 | Command | Alias | Description |
 |---------|-------|-------------|
 | `envy init` | — | Create `envy.toml`, register project in vault |
-| `envy set KEY=VALUE [-e ENV]` | — | Store or update a secret |
+| `envy set KEY=VALUE [-e ENV] [--stdin]` | — | Store or update a secret |
 | `envy get KEY [-e ENV]` | — | Print a single decrypted value to stdout |
 | `envy list [-e ENV]` | `ls` | List all key names (values never printed by default) |
 | `envy rm KEY [-e ENV]` | `remove`, `unset` | Delete a secret |
