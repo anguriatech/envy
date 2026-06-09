@@ -16,6 +16,7 @@ pub mod format;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use format::OutputFormat;
+use std::io::Read;
 
 pub use error::{CliError, cli_exit_code, core_exit_code, format_cli_error, format_core_error};
 
@@ -50,13 +51,24 @@ pub enum Commands {
     /// in the vault. Must be run once per project before any other command.
     Init,
 
-    /// Store or update a secret (KEY=VALUE).
+    /// Store or update a secret.
     ///
-    /// The value may contain additional `=` characters — only the first `=` is
-    /// used as the key/value separator.
+    /// By default the secret is provided as KEY=VALUE.  Only the first `=`
+    /// is used as the key/value separator — the value may contain additional
+    /// `=` characters.
+    ///
+    /// With `--stdin` the VALUE is read from standard input so that it never
+    /// appears in process listings (`ps`, `/proc`) or shell history:
+    ///
+    ///   echo "secret" | envy set --stdin KEY
     Set {
-        /// Secret to store in KEY=VALUE format.
+        /// Secret key name, or KEY=VALUE pair (when `--stdin` is not set).
         assignment: String,
+
+        /// Read the secret value from stdin.  The `assignment` argument is
+        /// used as the key name.
+        #[arg(long)]
+        stdin: bool,
 
         /// Target environment (default: development).
         #[arg(short = 'e', long = "env", value_name = "ENV")]
@@ -331,20 +343,40 @@ pub fn run() -> i32 {
     match cli.command {
         Commands::Init => unreachable!("Init is handled above"),
 
-        Commands::Set { assignment, env } => {
+        Commands::Set {
+            assignment,
+            stdin,
+            env,
+        } => {
             let env = env.as_deref().unwrap_or("");
-            match assignment.split_once('=') {
-                None => {
-                    let e = CliError::InvalidAssignment(assignment);
-                    eprintln!("{}", format_cli_error(&e));
-                    cli_exit_code(&e)
+            if stdin {
+                let mut value = String::new();
+                if let Err(e) = std::io::stdin().read_to_string(&mut value) {
+                    eprintln!("error: cannot read value from stdin: {e}");
+                    return 4;
                 }
-                Some((key, value)) => {
-                    match commands::cmd_set(&vault, &master_key, &project_id, env, key, value) {
-                        Ok(()) => 0,
-                        Err(e) => {
-                            eprintln!("{}", format_core_error(&e));
-                            core_exit_code(&e)
+                match commands::cmd_set(&vault, &master_key, &project_id, env, &assignment, &value)
+                {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        eprintln!("{}", format_core_error(&e));
+                        core_exit_code(&e)
+                    }
+                }
+            } else {
+                match assignment.split_once('=') {
+                    None => {
+                        let e = CliError::InvalidAssignment(assignment);
+                        eprintln!("{}", format_cli_error(&e));
+                        cli_exit_code(&e)
+                    }
+                    Some((key, value)) => {
+                        match commands::cmd_set(&vault, &master_key, &project_id, env, key, value) {
+                            Ok(()) => 0,
+                            Err(e) => {
+                                eprintln!("{}", format_core_error(&e));
+                                core_exit_code(&e)
+                            }
                         }
                     }
                 }
