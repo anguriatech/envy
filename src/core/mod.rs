@@ -22,5 +22,6 @@ pub use ops::{
 pub use status::{StatusRow, SyncStatus, derive_sync_status, get_status_report};
 pub use sync::{
     SyncError, UnsealResult, check_envelope_passphrase, new_empty_artifact, read_artifact,
-    seal_artifact, seal_env, unseal_artifact, unseal_env, write_artifact, write_artifact_atomic,
+    rotate_env, seal_artifact, seal_env, unseal_artifact, unseal_env, write_artifact,
+    write_artifact_atomic,
 };

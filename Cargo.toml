@@ -1,6 +1,6 @@
 [package]
 name = "envy"
-version = "0.2.7"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
 description = "A secure, deterministic, and frictionless environment variable manager"
@@ -32,6 +32,7 @@ clap_complete   = "4"
 
 [dev-dependencies]
 tempfile = "3"
+sha2 = "0.10"
 
 # The profile that 'dist' will build with
 [profile.dist]

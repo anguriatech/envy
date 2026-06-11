@@ -668,7 +668,7 @@ dependencies = [
 
 [[package]]
 name = "envy"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -683,6 +683,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror",
  "toml",

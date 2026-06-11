@@ -207,6 +207,25 @@ pub enum Commands {
     #[command(visible_alias = "st")]
     Status,
 
+    /// Re-seal an existing envelope in `envy.enc` with a new passphrase.
+    ///
+    /// The current passphrase is verified before the new one is accepted,
+    /// preventing the silent key-rotation that `envy encrypt` can perform
+    /// in headless mode. Use this as the safe path for key rotation.
+    ///
+    /// Interactive mode prompts for the current, new, and confirmation
+    /// passphrases. Headless mode (CI) reads `ENVY_PASSPHRASE_<ENV>` and
+    /// `ENVY_PASSPHRASE_<ENV>_NEW`. Omit `-e` to select environments via
+    /// a multi-select prompt.
+    ///
+    /// The rotation is forward-only: the old passphrase can no longer
+    /// decrypt the artifact.
+    Rotate {
+        /// Target environment to rotate (default: MultiSelect from envy.enc).
+        #[arg(short = 'e', long = "env", value_name = "ENV")]
+        env: Option<String>,
+    },
+
     /// Generate shell completion scripts.
     ///
     /// Prints the completion script for the given shell to stdout.
@@ -495,6 +514,18 @@ pub fn run() -> i32 {
         Commands::Status => {
             let artifact = artifact_path(&manifest_path);
             match commands::cmd_status(&vault, &project_id, &artifact, cli.format) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("{}", format_cli_error(&e));
+                    cli_exit_code(&e)
+                }
+            }
+        }
+
+        Commands::Rotate { env } => {
+            let artifact = artifact_path(&manifest_path);
+            match commands::cmd_rotate(&vault, &master_key, &project_id, &artifact, env.as_deref())
+            {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{}", format_cli_error(&e));

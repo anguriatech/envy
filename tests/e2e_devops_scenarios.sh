@@ -71,6 +71,20 @@ assert_eq() {
   fi
 }
 
+assert_ne() {
+  TOTAL=$((TOTAL + 1))
+  local label="$1" unexpected="$2" actual="$3"
+  if [[ "$unexpected" != "$actual" ]]; then
+    echo -e "  ${GREEN}✓${RESET} ${label}"
+    PASS=$((PASS + 1))
+  else
+    echo -e "  ${RED}✗${RESET} ${label}"
+    echo -e "    ${DIM}expected not equal: ${unexpected}${RESET}"
+    echo -e "    ${DIM}actual:              ${actual}${RESET}"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
 assert_contains() {
   TOTAL=$((TOTAL + 1))
   local label="$1" substring="$2" haystack="$3"
@@ -679,6 +693,80 @@ echo -e "${YELLOW}  [S9] 'envy df' alias works...${RESET}"
 S9_DF_EXIT=0
 (cd "$S9_DIR" && ENVY_PASSPHRASE_DEVELOPMENT='diff-pass' "$ENVY" df -e development 2>/dev/null) || S9_DF_EXIT=$?
 assert_eq "envy df alias exits 0" "0" "$S9_DF_EXIT"
+
+# =============================================================================
+# Scenario 10: envy rotate (012-cli-rotate)
+# =============================================================================
+section "Scenario 10 — Envelope Passphrase Rotation"
+
+S10_DIR="$WORKSPACE/scenario10"
+
+# ── Setup: init, set a secret, encrypt with passphrase A ──────────────────────
+echo -e "${YELLOW}  [S10] Setup: init + set + encrypt with passphrase A...${RESET}"
+init_project "$S10_DIR"
+(cd "$S10_DIR" && "$ENVY" set 'SECRET=hunter2')
+(cd "$S10_DIR" && ENVY_PASSPHRASE_DEVELOPMENT='pass-A' "$ENVY" encrypt -e development < /dev/null)
+
+# Capture the SHA-256 of envy.enc before rotation.
+S10_SHA_BEFORE=$(sha256sum "$S10_DIR/envy.enc" | awk '{print $1}')
+
+# ── US1 happy path: rotate A → B via headless env vars ───────────────────────
+echo -e "${YELLOW}  [S10] US1: rotating A→B headlessly (env vars)...${RESET}"
+S10_ROT_EXIT=0
+(cd "$S10_DIR" && \
+  ENVY_PASSPHRASE_DEVELOPMENT='pass-A' \
+  ENVY_PASSPHRASE_DEVELOPMENT_NEW='pass-B' \
+  "$ENVY" rotate -e development < /dev/null) || S10_ROT_EXIT=$?
+assert_eq "rotate with correct passphrases exits 0" "0" "$S10_ROT_EXIT"
+
+# The artifact MUST change.
+S10_SHA_AFTER_ROT=$(sha256sum "$S10_DIR/envy.enc" | awk '{print $1}')
+assert_ne "envy.enc changes after successful rotation" "$S10_SHA_BEFORE" "$S10_SHA_AFTER_ROT"
+
+# ── US1 verification: decrypt with NEW passphrase succeeds ───────────────────
+echo -e "${YELLOW}  [S10] US1: decrypt with new passphrase (B) succeeds...${RESET}"
+(cd "$S10_DIR" && \
+  ENVY_PASSPHRASE='pass-B' \
+  "$ENVY" decrypt < /dev/null)
+assert_eq "decrypt with new passphrase exits 0" "0" "$?"
+
+# ── US1 verification: decrypt with OLD passphrase (A) fails ──────────────────
+echo -e "${YELLOW}  [S10] US1: decrypt with old passphrase (A) fails (NothingImported)...${RESET}"
+S10_DEC_OLD_EXIT=0
+(cd "$S10_DIR" && \
+  ENVY_PASSPHRASE='pass-A' \
+  "$ENVY" decrypt < /dev/null) || S10_DEC_OLD_EXIT=$?
+# Exit code 1 = NothingImported (no envs could be decrypted).
+assert_eq "decrypt with old passphrase exits 1" "1" "$S10_DEC_OLD_EXIT"
+
+# ── US2 safety: wrong current passphrase leaves artifact byte-identical ──────
+echo -e "${YELLOW}  [S10] US2: wrong current passphrase leaves artifact unchanged...${RESET}"
+S10_WRONG_EXIT=0
+(cd "$S10_DIR" && \
+  ENVY_PASSPHRASE_DEVELOPMENT='WRONG-pass' \
+  ENVY_PASSPHRASE_DEVELOPMENT_NEW='pass-C' \
+  "$ENVY" rotate -e development < /dev/null) || S10_WRONG_EXIT=$?
+assert_eq "rotate with wrong current exits 2" "2" "$S10_WRONG_EXIT"
+
+S10_SHA_AFTER_WRONG=$(sha256sum "$S10_DIR/envy.enc" | awk '{print $1}')
+assert_eq "envy.enc byte-identical after wrong-pass attempt" "$S10_SHA_AFTER_ROT" "$S10_SHA_AFTER_WRONG"
+
+# ── US1 verification: rotate with correct current (A no longer works, B does) ─
+echo -e "${YELLOW}  [S10] US1: rotate again, B→C, using new current passphrase B...${RESET}"
+S10_ROT2_EXIT=0
+(cd "$S10_DIR" && \
+  ENVY_PASSPHRASE_DEVELOPMENT='pass-B' \
+  ENVY_PASSPHRASE_DEVELOPMENT_NEW='pass-C' \
+  "$ENVY" rotate -e development < /dev/null) || S10_ROT2_EXIT=$?
+assert_eq "rotate B→C with correct current exits 0" "0" "$S10_ROT2_EXIT"
+
+# Verify decrypt with C works, A and B both fail.
+(cd "$S10_DIR" && ENVY_PASSPHRASE='pass-C' "$ENVY" decrypt < /dev/null)
+assert_eq "decrypt with pass-C exits 0" "0" "$?"
+
+S10_DEC_B_EXIT=0
+(cd "$S10_DIR" && ENVY_PASSPHRASE='pass-B' "$ENVY" decrypt < /dev/null) || S10_DEC_B_EXIT=$?
+assert_eq "decrypt with old pass-B now exits 1" "1" "$S10_DEC_B_EXIT"
 
 # =============================================================================
 # Summary

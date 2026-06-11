@@ -439,7 +439,10 @@ than returning garbage plaintext.
 
 The nonce (96-bit random value) is generated fresh for every seal operation, so
 re-sealing the same secrets produces different ciphertext each time — preventing
-ciphertext comparison attacks.
+ciphertext comparison attacks. `envy rotate` re-seals the same plaintext under a
+new passphrase; the new envelope is byte-different from the old one (fresh nonce,
+fresh KDF salt, fresh ciphertext), which is also the visual cue in the git diff
+that confirms the rotation took effect.
 
 ### 7.4 Progressive Disclosure implementation
 
@@ -467,7 +470,42 @@ returns `CliError::NothingImported` (exit 1). If at least one environment was im
 it exits 0 regardless of how many were skipped — this is the correct UX for a developer
 with partial access.
 
-### 7.5 Layer responsibilities
+### 7.5 `envy rotate` — safe key rotation
+
+`envy rotate -e ENV` is the dedicated path for key rotation. Unlike `envy encrypt`,
+which performs a silent key rotation in headless mode when the passphrase does not
+match the existing envelope, `envy rotate` always verifies the current passphrase
+before re-sealing. This makes it the safe path for use from the VS Code extension
+and from CI scripts, where a typo in the passphrase would otherwise lock the team
+out of the artifact.
+
+The implementation lives in two places:
+
+- `src/core/sync.rs::rotate_env` — the pure core-level helper. It checks
+  `check_envelope_passphrase` against the existing envelope, then re-seals via
+  `seal_env` (which generates a fresh `OsRng` nonce + KDF salt and writes a fresh
+  `sync_marker` row for `envy status`).
+- `src/cli/commands.rs::cmd_rotate` — the CLI handler. Resolves the current and
+  new passphrases (interactive via `dialoguer::Password::with_confirmation`, or
+  headless via `ENVY_PASSPHRASE_<ENV>` + `ENVY_PASSPHRASE_<ENV>_NEW`), wraps both
+  in `zeroize::Zeroizing<String>`, and calls `rotate_env` for each selected env.
+
+**Memory hygiene:** the current and new passphrases live in `Zeroizing<String>`
+bindings inside `cmd_rotate`. They are dropped before any early `return`, and
+they are never copied into a plain `String` or `&str` that outlives the function
+scope (Constitution Principle I).
+
+**Precedence rule (clarification #1):** when BOTH env vars are set AND a TTY is
+present, headless mode is preferred. This matches `cmd_encrypt`'s behaviour at
+`src/cli/commands.rs:680` and avoids surprising CI users who also happen to run
+from a terminal.
+
+**Forward-only semantics:** rotation does NOT support revocation. The old
+passphrase becomes invalid for new seals, and any `envy.enc` sealed with the old
+passphrase is permanently invalid. This is the intended behaviour — see the
+spec's Out of Scope section for the rationale.
+
+### 7.6 Layer responsibilities
 
 ```
 src/crypto/artifact.rs  ← pure crypto: Argon2id KDF, AES-256-GCM, Base64, types

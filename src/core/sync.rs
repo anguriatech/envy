@@ -261,6 +261,79 @@ pub fn seal_env(
 }
 
 // ---------------------------------------------------------------------------
+// rotate_env — re-seal an existing envelope with a new passphrase (T002)
+// ---------------------------------------------------------------------------
+
+/// Re-seals the `env_name` envelope in `artifact` with `new_passphrase`,
+/// after verifying that `current_passphrase` matches the existing envelope.
+///
+/// This is the core-level helper backing the `envy rotate` CLI subcommand
+/// (specs/012-cli-rotate). It enforces the safety guarantee that a typo
+/// in the current passphrase can never produce a silent key rotation:
+/// the function returns `Err` before mutating `artifact` whenever
+/// `current_passphrase` does not match the existing envelope.
+///
+/// # Algorithm
+/// 1. Validate `new_passphrase` is non-empty and non-whitespace.
+/// 2. Look up `artifact.environments[env_name]`. If missing, return an
+///    error so the caller can map it to `EnvNotFound` (exit 3).
+/// 3. Verify `current_passphrase` against the existing envelope via
+///    [`check_envelope_passphrase`]. If it returns `false`, return
+///    `DecryptionFailed` so the caller can map it to `PassphraseInput`
+///    (exit 2). The `artifact` is NOT modified at this point.
+/// 4. Re-seal via [`seal_env`] — this re-reads secrets from the vault,
+///    generates a fresh `OsRng` nonce and KDF salt, and writes a fresh
+///    `sync_marker` row.
+/// 5. Replace `artifact.environments[env_name]` with the new envelope.
+///
+/// # Errors
+/// - [`SyncError::Artifact(ArtifactError::WeakPassphrase)`] if `new_passphrase` is empty.
+/// - [`SyncError::Artifact(ArtifactError::MalformedArtifact)`] if `env_name` is not in `artifact.environments`.
+/// - [`SyncError::Artifact(ArtifactError::DecryptionFailed)`] if `current_passphrase` does not match the existing envelope.
+/// - [`SyncError::VaultError`] if reading secrets from the vault fails.
+///
+/// # Post-conditions
+/// - On success, only `artifact.environments[env_name]` is replaced. All other
+///   entries in `artifact.environments` are byte-identical to their prior state.
+/// - On failure, `artifact` is unchanged.
+pub fn rotate_env(
+    vault: &Vault,
+    master_key: &[u8; 32],
+    project_id: &ProjectId,
+    artifact: &mut SyncArtifact,
+    env_name: &str,
+    current_passphrase: &str,
+    new_passphrase: &str,
+) -> Result<(), SyncError> {
+    if new_passphrase.trim().is_empty() {
+        return Err(SyncError::Artifact(ArtifactError::WeakPassphrase));
+    }
+
+    let existing_envelope = match artifact.environments.get(env_name) {
+        Some(e) => e,
+        None => {
+            return Err(SyncError::Artifact(ArtifactError::MalformedArtifact(
+                format!("environment '{env_name}' not found in artifact"),
+            )));
+        }
+    };
+
+    if !check_envelope_passphrase(current_passphrase, env_name, existing_envelope) {
+        return Err(SyncError::Artifact(ArtifactError::MalformedEnvelope(
+            env_name.to_string(),
+            "current passphrase does not match the existing envelope".to_string(),
+        )));
+    }
+
+    let new_envelope = seal_env(vault, master_key, project_id, env_name, new_passphrase)?;
+    artifact
+        .environments
+        .insert(env_name.to_string(), new_envelope);
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // check_envelope_passphrase — pre-flight decryption check (T008)
 // ---------------------------------------------------------------------------
 
@@ -562,6 +635,113 @@ mod tests {
         assert!(
             dev.sealed_at.unwrap() > 0,
             "sealed_at must be a positive Unix timestamp"
+        );
+    }
+
+    // T005 — rotate_env happy path replaces envelope
+    #[test]
+    fn rotate_env_happy_path_replaces_envelope() {
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_KEY, &pid, "development", "API_KEY", "secret")
+            .expect("set_secret must succeed");
+
+        // Build an initial artifact sealed with passphrase A.
+        let mut artifact = seal_artifact(&vault, &TEST_KEY, &pid, "pass-A", Some(&["development"]))
+            .expect("seal_artifact must succeed");
+        let dev_before = artifact.environments["development"].clone();
+        let dev_ciphertext_before = dev_before.ciphertext.clone();
+        let dev_nonce_before = dev_before.nonce.clone();
+
+        // Rotate: A → B.
+        rotate_env(
+            &vault,
+            &TEST_KEY,
+            &pid,
+            &mut artifact,
+            "development",
+            "pass-A",
+            "pass-B",
+        )
+        .expect("rotate_env must succeed with correct current passphrase");
+
+        // The new envelope must be byte-different from the old one.
+        let dev_after = &artifact.environments["development"];
+        assert_ne!(
+            dev_after.ciphertext, dev_ciphertext_before,
+            "ciphertext must change after rotation"
+        );
+        assert_ne!(
+            dev_after.nonce, dev_nonce_before,
+            "nonce must be regenerated after rotation"
+        );
+
+        // The new passphrase must decrypt the new envelope.
+        assert!(
+            check_envelope_passphrase("pass-B", "development", dev_after),
+            "new passphrase must decrypt the new envelope"
+        );
+
+        // The old passphrase must NOT decrypt the new envelope.
+        assert!(
+            !check_envelope_passphrase("pass-A", "development", dev_after),
+            "old passphrase must NOT decrypt the new envelope"
+        );
+    }
+
+    // T006 — rotate_env wrong current passphrase leaves artifact unchanged
+    #[test]
+    fn rotate_env_wrong_current_passphrase_leaves_artifact_unchanged() {
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_KEY, &pid, "development", "API_KEY", "secret")
+            .expect("set_secret must succeed");
+
+        let mut artifact = seal_artifact(&vault, &TEST_KEY, &pid, "pass-A", Some(&["development"]))
+            .expect("seal_artifact must succeed");
+        let dev_before = artifact.environments["development"].clone();
+        let staging_before = make_envelope("pass-X", "OTHER", "value");
+        artifact
+            .environments
+            .insert("staging".to_string(), staging_before.clone());
+
+        // Attempt rotation with wrong current passphrase.
+        let result = rotate_env(
+            &vault,
+            &TEST_KEY,
+            &pid,
+            &mut artifact,
+            "development",
+            "WRONG-pass",
+            "pass-B",
+        );
+
+        assert!(
+            matches!(
+                result,
+                Err(SyncError::Artifact(
+                    crate::crypto::artifact::ArtifactError::MalformedEnvelope(_, _)
+                ))
+            ),
+            "wrong current passphrase must return MalformedEnvelope, got: {:?}",
+            result.err()
+        );
+
+        // The development envelope must be byte-identical to before.
+        let dev_after = &artifact.environments["development"];
+        assert_eq!(
+            dev_after.ciphertext, dev_before.ciphertext,
+            "ciphertext must be unchanged after wrong-pass attempt"
+        );
+        assert_eq!(
+            dev_after.nonce, dev_before.nonce,
+            "nonce must be unchanged after wrong-pass attempt"
+        );
+
+        // Other envelopes must also be unchanged.
+        assert_eq!(
+            artifact.environments["staging"].ciphertext, staging_before.ciphertext,
+            "other envelopes must be unchanged"
         );
     }
 }
