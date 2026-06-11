@@ -311,6 +311,7 @@ Every secret value travels through the codebase in `zeroize::Zeroizing<String>`.
 | `envy export [-e ENV] [--format]` | — | Print all secrets to stdout (dotenv / JSON / shell) |
 | `envy diff [-e ENV] [--reveal]` | `df` | Compare vault against `envy.enc` before encrypting |
 | `envy status` | `st` | Show sync status dashboard (no passphrase required) |
+| `envy rotate [-e ENV]` | — | Re-seal an envelope with a new passphrase (verifies current first) |
 | `envy completions SHELL` | — | Print shell completion script to stdout |
 
 ### Output Formats
@@ -376,6 +377,29 @@ envy decrypt
 #   ⚠  production    skipped — different passphrase or key
 # exit code: 0  ← partial access is success
 ```
+
+#### Rotating a passphrase
+
+Use `envy rotate` as the safe path for key rotation. Unlike `envy encrypt`, it verifies the current passphrase against the existing envelope before accepting a new one — a typo can never silently change the envelope's passphrase.
+
+```bash
+envy rotate -e production
+# Passphrase for 'production':    <old-pass>
+# New passphrase for 'production': <new-pass>
+# Confirm new passphrase:          <new-pass>
+#   ✓  'production' rotated. Passphrase changed.
+#      Previous passphrase can no longer decrypt this artifact.
+```
+
+In CI / headless mode, set both `ENVY_PASSPHRASE_<ENV>` and `ENVY_PASSPHRASE_<ENV>_NEW`:
+
+```bash
+ENVY_PASSPHRASE_PRODUCTION=old-pass \
+ENVY_PASSPHRASE_PRODUCTION_NEW=new-pass \
+  envy rotate -e production
+```
+
+The rotation is **forward-only** — the old passphrase can no longer decrypt the artifact, and any other `envy.enc` sealed with the old passphrase can never be decrypted. The team's responsibility is to distribute the new passphrase through a secure channel (1Password, password manager, secure Slack DM, etc.).
 
 </details>
 
