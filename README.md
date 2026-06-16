@@ -159,6 +159,24 @@ git push
 
 A teammate pulls the repo and runs `envy decrypt`. Done. No Slack messages, no shared spreadsheets, no plaintext ever leaving your encrypted vault.
 
+#### Nested projects (monorepo / multi-project support)
+
+Since v0.3.2, `envy init` works in subdirectories of existing envy projects. Each project gets its own UUID in the vault and its own `envy.toml` + `envy.enc`. Commands resolve the closest `envy.toml` automatically — running `envy list` from a child directory shows the child's secrets, not the parent's.
+
+```
+/monorepo/
+  envy.toml     ← org-wide credentials
+  envy.enc
+  /project-a/
+    envy init   ← project-specific credentials (different UUID)
+    envy.toml
+    envy.enc
+  /project-b/
+    envy init
+    envy.toml
+    envy.enc
+```
+
 ---
 
 ## Sync Status at a Glance

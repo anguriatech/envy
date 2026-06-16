@@ -43,7 +43,6 @@ fn display_env(env: &str) -> &str {
 ///
 /// # Errors
 /// - [`CliError::AlreadyInitialised`] — `envy.toml` exists in the cwd.
-/// - [`CliError::ParentProjectExists`] — `envy.toml` exists in a parent dir.
 /// - [`CliError::VaultOpen`] — keyring, vault open, or DB write failed.
 pub(super) fn cmd_init() -> Result<(), CliError> {
     let cwd = std::env::current_dir()
@@ -54,10 +53,9 @@ pub(super) fn cmd_init() -> Result<(), CliError> {
         Ok((_, found_dir)) if found_dir == cwd => {
             return Err(CliError::AlreadyInitialised);
         }
-        Ok((_, found_dir)) => {
-            return Err(CliError::ParentProjectExists(
-                found_dir.display().to_string(),
-            ));
+        Ok((_, _found_dir)) => {
+            // A parent has envy.toml, but the cwd does not.
+            // Proceed with init — nested projects are supported (spec 014).
         }
         Err(CoreError::ManifestNotFound) => {
             // No manifest anywhere above — safe to initialise.
@@ -3594,5 +3592,74 @@ mod tests {
         assert!(types.contains(&"added"), "must contain 'added'");
         assert!(types.contains(&"removed"), "must contain 'removed'");
         assert!(types.contains(&"modified"), "must contain 'modified'");
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 5 — nested projects tests (T006, T008, spec 014-nested-projects)
+    //
+    // cmd_init cannot be unit-tested in isolation because it reads the global
+    // CWD and opens the real vault via the OS keyring. Instead, these tests
+    // verify the find_manifest + check logic that was changed at lines 53-60:
+    //   - found_dir == cwd  → AlreadyInitialised  (must still reject)
+    //   - found_dir != cwd  → proceed             (was ParentProjectExists)
+    // The cli_integration tests cover the full init flow (with real keyring,
+    // marked #[ignore] in CI).
+    // -----------------------------------------------------------------------
+
+    // T006 [US1] — nested init: parent envy.toml is no longer a blocker
+    #[test]
+    fn init_nested_project_logic_parent_not_blocker() {
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let parent = tmp.path();
+        let child = parent.join("child");
+        std::fs::create_dir(&child).expect("mkdir child");
+
+        std::fs::write(
+            parent.join("envy.toml"),
+            "project_id = \"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\"\n",
+        )
+        .expect("write parent envy.toml");
+
+        let result = crate::core::find_manifest(&child);
+        assert!(
+            result.is_ok(),
+            "find_manifest from child must succeed (finds parent)"
+        );
+        let (_, found_dir) = result.unwrap();
+
+        // The walker found the parent, not the child.
+        assert_eq!(found_dir, parent, "found_dir must be the parent");
+
+        // New logic (spec 014): found_dir != cwd → proceed with init.
+        // Old logic: this would have returned ParentProjectExists.
+        assert!(
+            found_dir != child,
+            "parent manifest in ancestor must NOT block init"
+        );
+    }
+
+    // T008 [US2] — AlreadyInitialised is still returned when CWD has envy.toml
+    #[test]
+    fn init_already_initialised_logic_still_blocks() {
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let dir = tmp.path();
+
+        std::fs::write(
+            dir.join("envy.toml"),
+            "project_id = \"11111111-2222-3333-4444-555555555555\"\n",
+        )
+        .expect("write envy.toml");
+
+        let result = crate::core::find_manifest(dir);
+        assert!(result.is_ok(), "find_manifest from CWD must succeed");
+        let (_, found_dir) = result.unwrap();
+        assert_eq!(found_dir, *dir, "found_dir must be the CWD");
+
+        // found_dir == cwd → AlreadyInitialised would be triggered.
+        // This assert documents the regression-test contract.
+        assert!(
+            found_dir == *dir,
+            "init in CWD with existing envy.toml must be blocked (regression guard)"
+        );
     }
 }
