@@ -306,7 +306,7 @@ Every secret value travels through the codebase in `zeroize::Zeroizing<String>`.
 | `envy rm KEY [-e ENV]` | `remove`, `unset` | Delete a secret |
 | `envy run [-e ENV] -- CMD` | — | Inject secrets and run a child process |
 | `envy migrate FILE [-e ENV]` | — | Import all `KEY=VALUE` pairs from a `.env` file |
-| `envy encrypt [-e ENV]` | `enc` | Seal vault into `envy.enc` |
+| `envy encrypt [-e ENV]` | `enc` | Seal vault into `envy.enc` (strict: passphrase must match an existing envelope — use `envy rotate` to change it) |
 | `envy decrypt` | `dec` | Unseal `envy.enc` and restore secrets |
 | `envy export [-e ENV] [--format]` | — | Print all secrets to stdout (dotenv / JSON / shell) |
 | `envy diff [-e ENV] [--reveal]` | `df` | Compare vault against `envy.enc` before encrypting |
@@ -400,6 +400,17 @@ ENVY_PASSPHRASE_PRODUCTION_NEW=new-pass \
 ```
 
 The rotation is **forward-only** — the old passphrase can no longer decrypt the artifact, and any other `envy.enc` sealed with the old passphrase can never be decrypted. The team's responsibility is to distribute the new passphrase through a secure channel (1Password, password manager, secure Slack DM, etc.).
+
+#### Strict `envy encrypt` — no silent key rotation
+
+Since v0.3.1, `envy encrypt` is strict: the passphrase you provide must either match the existing envelope (re-seal) or be the first time you're creating the envelope. If neither condition holds, `envy encrypt` fails with:
+
+```
+error: passphrase input failed: passphrase does not match the existing envelope.
+hint: use `envy rotate -e ENV` to change the envelope's passphrase.
+```
+
+Exit code 2. The artifact is left unchanged. Use `envy rotate -e ENV` to change the passphrase — `envy encrypt` will not do it for you.
 
 </details>
 

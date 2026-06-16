@@ -548,27 +548,6 @@ fn print_diceware_banner(passphrase: &str) {
     );
 }
 
-/// Prompts the user to confirm a passphrase key-rotation for `env_name`.
-///
-/// Displays a high-visibility warning, then uses `Confirm` with `default(false)`
-/// so pressing Enter or typing 'N' aborts the rotation (FR-008, SC-004).
-///
-/// Returns `Ok(true)` if the user explicitly confirms, `Ok(false)` to abort.
-fn confirm_key_rotation(env_name: &str) -> Result<bool, CliError> {
-    eprintln!(
-        "\n  {} Passphrase does not match existing data for '{env_name}'.\n  \
-         Continuing will ROTATE the key. Data sealed with the old passphrase\n  \
-         will not be recoverable without it.\n",
-        dialoguer::console::style("WARNING:").yellow().bold()
-    );
-    let theme = dialoguer::theme::ColorfulTheme::default();
-    dialoguer::Confirm::with_theme(&theme)
-        .with_prompt(format!("Rotate the key for '{env_name}'?"))
-        .default(false)
-        .interact()
-        .map_err(|e| CliError::PassphraseInput(e.to_string()))
-}
-
 /// Resolves the passphrase for encrypt/decrypt operations.
 ///
 /// Priority order (Constitution Principle I — secrets must be zeroed early):
@@ -745,21 +724,19 @@ pub(super) fn cmd_encrypt(
             None => continue, // no env var and no TTY → skip this env
         };
 
-        // T024: Pre-flight key-rotation check (interactive path only, FR-008, SC-004).
-        // Headless mode bypasses this check — CI operators know their passphrases.
-        if !headless {
-            if let Some(existing_envelope) = artifact.environments.get(env_name) {
-                if !crate::core::check_envelope_passphrase(
-                    passphrase.as_ref(),
-                    env_name,
-                    existing_envelope,
-                ) {
-                    // Passphrase mismatch → warn and require explicit confirmation.
-                    if !confirm_key_rotation(env_name)? {
-                        continue; // User said No (or pressed Enter) → skip this env.
-                    }
-                    // User explicitly confirmed → fall through to seal.
-                }
+        // v0.3.1+ (spec 013): strict verify-or-fail. Runs in BOTH headless and
+        // interactive mode. On mismatch, fail with exit 2 and direct the user
+        // to `envy rotate`.
+        if let Some(existing_envelope) = artifact.environments.get(env_name) {
+            if !crate::core::check_envelope_passphrase(
+                passphrase.as_ref(),
+                env_name,
+                existing_envelope,
+            ) {
+                return Err(CliError::PassphraseInput(
+                    "passphrase does not match the existing envelope.\nhint: use `envy rotate -e ENV` to change the envelope's passphrase."
+                        .to_string(),
+                ));
             }
         }
 
@@ -2081,10 +2058,10 @@ mod tests {
             .get("development")
             .expect("development must be present");
 
-        // Wrong passphrase → false (rotation warning path would trigger).
+        // Wrong passphrase → false (strict-fail path in cmd_encrypt).
         assert!(
             !crate::core::check_envelope_passphrase("pass-B", "development", envelope),
-            "wrong passphrase must return false (key-rotation warning path)"
+            "wrong passphrase must return false (strict-fail path in cmd_encrypt)"
         );
         // Correct passphrase → true.
         assert!(
@@ -2281,6 +2258,244 @@ mod tests {
             4,
             "malformed envy.enc must map to exit code 4, got: {:?}",
             err
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 8 — strict-encrypt tests (T006–T020, US1/US2/US3/US4/US5 for
+    // spec 013-encrypt-strict)
+    //
+    // The interactive path requires a real TTY, so all these tests drive
+    // the headless path via ENVY_PASSPHRASE / ENVY_PASSPHRASE_<ENV>. The
+    // interactive path is covered by the E2E script (Scenario 11).
+    // -----------------------------------------------------------------------
+
+    // T006 [US1] — first-time seal in interactive mode (pre-existing behaviour)
+    //    Verified by the pre-existing encrypt_writes_envy_enc_with_correct_environments
+    //    test (line 1777), which now also exercises the strict-verify path because
+    //    no envelope exists yet at first seal. The test must continue to pass.
+
+    // T007 [US1] — first-time seal in headless mode (pre-existing behaviour)
+    //    Verified by the pre-existing encrypt_uses_envy_passphrase_env_var_no_prompt
+    //    test (line 1817), which now also exercises the strict-verify path because
+    //    no envelope exists yet at first seal. The test must continue to pass.
+
+    // T009 [US2] — update seal with matching passphrase succeeds
+    #[test]
+    fn encrypt_update_seal_matching_passphrase_succeeds() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+
+        let artifact_path = tmp.path().join("envy.enc");
+        seal_test_env(&vault, &pid, "development", "pass-A", &artifact_path);
+
+        // Update with the matching passphrase → must succeed.
+        unsafe { std::env::set_var("ENVY_PASSPHRASE_DEVELOPMENT", "pass-A") };
+        let result = cmd_encrypt(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            &artifact_path,
+            Some("development"),
+        );
+        unsafe { std::env::remove_var("ENVY_PASSPHRASE_DEVELOPMENT") };
+
+        result.expect("re-seal with matching passphrase must succeed");
+    }
+
+    // T010 [US2] — update seal headlessly: succeeds, envelope is byte-different
+    #[test]
+    fn encrypt_update_seal_headless_matching_succeeds_and_byte_changes() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+
+        let artifact_path = tmp.path().join("envy.enc");
+        seal_test_env(&vault, &pid, "development", "pass-A", &artifact_path);
+        let sha_before = sha256_of_file(&artifact_path);
+
+        // Re-seal headlessly with the same passphrase.
+        unsafe { std::env::set_var("ENVY_PASSPHRASE_DEVELOPMENT", "pass-A") };
+        let result = cmd_encrypt(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            &artifact_path,
+            Some("development"),
+        );
+        unsafe { std::env::remove_var("ENVY_PASSPHRASE_DEVELOPMENT") };
+
+        result.expect("re-seal with matching passphrase must succeed");
+        let sha_after = sha256_of_file(&artifact_path);
+        assert_ne!(
+            sha_before, sha_after,
+            "envelope must be byte-different after re-seal (fresh salt + nonce)"
+        );
+
+        // But the new envelope must still decrypt with the same passphrase.
+        unsafe { std::env::set_var("ENVY_PASSPHRASE", "pass-A") };
+        let dec = cmd_decrypt(&vault, &TEST_MASTER_KEY, &pid, &artifact_path);
+        unsafe { std::env::remove_var("ENVY_PASSPHRASE") };
+        dec.expect("decrypt with original passphrase must still work after re-seal");
+    }
+
+    // T012 [US3] — update seal with wrong passphrase (interactive context, but
+    // driven headlessly for testability): fails with PassphraseInput, exit 2
+    #[test]
+    fn encrypt_update_seal_mismatch_interactive_fails_exit_2() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+
+        let artifact_path = tmp.path().join("envy.enc");
+        seal_test_env(&vault, &pid, "development", "pass-A", &artifact_path);
+
+        // The interactive prompt code path requires a real TTY; we test the
+        // strict-verify block (which runs in BOTH modes) via the headless path.
+        // The assertion is identical to the headless case.
+        unsafe { std::env::set_var("ENVY_PASSPHRASE_DEVELOPMENT", "WRONG-pass") };
+        let result = cmd_encrypt(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            &artifact_path,
+            Some("development"),
+        );
+        unsafe { std::env::remove_var("ENVY_PASSPHRASE_DEVELOPMENT") };
+
+        assert!(
+            matches!(result, Err(CliError::PassphraseInput(_))),
+            "mismatch must return PassphraseInput, got: {:?}",
+            result.err()
+        );
+        assert_eq!(
+            cli_exit_code(&result.err().unwrap()),
+            2,
+            "PassphraseInput must map to exit 2"
+        );
+    }
+
+    // T013 [US3] — update seal headlessly with wrong passphrase fails with exit 2
+    #[test]
+    fn encrypt_update_seal_mismatch_headless_fails_exit_2() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+
+        let artifact_path = tmp.path().join("envy.enc");
+        seal_test_env(&vault, &pid, "development", "pass-A", &artifact_path);
+
+        unsafe { std::env::set_var("ENVY_PASSPHRASE_DEVELOPMENT", "WRONG-pass") };
+        let result = cmd_encrypt(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            &artifact_path,
+            Some("development"),
+        );
+        unsafe { std::env::remove_var("ENVY_PASSPHRASE_DEVELOPMENT") };
+
+        assert!(
+            matches!(result, Err(CliError::PassphraseInput(_))),
+            "headless mismatch must return PassphraseInput (was: silent rotation), got: {:?}",
+            result.err()
+        );
+    }
+
+    // T014 [US3] — global ENVY_PASSPHRASE mismatch also fails (not just per-env)
+    #[test]
+    fn encrypt_update_seal_global_envy_passphrase_mismatch_fails() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+
+        let artifact_path = tmp.path().join("envy.enc");
+        seal_test_env(&vault, &pid, "development", "pass-A", &artifact_path);
+
+        // Only set the global var, NOT the per-env var.
+        unsafe { std::env::set_var("ENVY_PASSPHRASE", "WRONG-pass") };
+        let result = cmd_encrypt(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            &artifact_path,
+            Some("development"),
+        );
+        unsafe { std::env::remove_var("ENVY_PASSPHRASE") };
+
+        assert!(
+            matches!(result, Err(CliError::PassphraseInput(_))),
+            "global ENVY_PASSPHRASE mismatch must also fail (was: silent rotation), got: {:?}",
+            result.err()
+        );
+    }
+
+    // T015 [US3 / SC-003] — mismatch leaves envy.enc byte-identical
+    #[test]
+    fn encrypt_mismatch_leaves_artifact_unchanged_sha256() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+
+        let artifact_path = tmp.path().join("envy.enc");
+        seal_test_env(&vault, &pid, "development", "pass-A", &artifact_path);
+        let sha_before = sha256_of_file(&artifact_path);
+
+        unsafe { std::env::set_var("ENVY_PASSPHRASE_DEVELOPMENT", "WRONG-pass") };
+        let result = cmd_encrypt(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            &artifact_path,
+            Some("development"),
+        );
+        unsafe { std::env::remove_var("ENVY_PASSPHRASE_DEVELOPMENT") };
+
+        // The result must be an error, and the artifact must be byte-identical.
+        assert!(result.is_err(), "mismatch must error, got: {:?}", result);
+        let sha_after = sha256_of_file(&artifact_path);
+        assert_eq!(
+            sha_before, sha_after,
+            "envy.enc must be byte-identical after a mismatch attempt (SC-003)"
+        );
+    }
+
+    // T019 [US5] — update seal with empty local vault skips with warning
+    #[test]
+    fn encrypt_update_seal_empty_vault_skips_with_warning() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+
+        // Seal with passphrase A and one secret.
+        let artifact_path = tmp.path().join("envy.enc");
+        seal_test_env(&vault, &pid, "development", "pass-A", &artifact_path);
+        let sha_before = sha256_of_file(&artifact_path);
+
+        // Locally delete the only secret — vault now has 0 secrets for development.
+        crate::core::delete_secret(&vault, &pid, "development", "API_KEY")
+            .expect("delete_secret must succeed");
+
+        // Attempt re-seal with the matching passphrase.
+        unsafe { std::env::set_var("ENVY_PASSPHRASE_DEVELOPMENT", "pass-A") };
+        let result = cmd_encrypt(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            &artifact_path,
+            Some("development"),
+        );
+        unsafe { std::env::remove_var("ENVY_PASSPHRASE_DEVELOPMENT") };
+
+        // Must succeed (skip with warning, not error).
+        result.expect("cmd_encrypt must succeed (skip) when local vault is empty");
+
+        // Artifact must be byte-identical (no overwrite with empty envelope).
+        let sha_after = sha256_of_file(&artifact_path);
+        assert_eq!(
+            sha_before, sha_after,
+            "envy.enc must NOT be overwritten when local vault is empty"
         );
     }
 
