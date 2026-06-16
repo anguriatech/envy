@@ -32,10 +32,6 @@ pub enum CliError {
     #[error("already initialised: envy.toml exists in this directory")]
     AlreadyInitialised,
 
-    /// `init` was run inside a directory tree that already has a parent project.
-    #[error("parent project detected: \"{0}\" already contains envy.toml")]
-    ParentProjectExists(String),
-
     /// The vault file was opened but the project UUID was not found inside it.
     #[error("project not found in vault \u{2014} was the vault file moved?")]
     ProjectNotInVault,
@@ -129,7 +125,6 @@ pub fn cli_exit_code(e: &CliError) -> i32 {
         CliError::InvalidAssignment(_) => 2,
         CliError::FileNotFound(_, _) => 1,
         CliError::AlreadyInitialised => 3,
-        CliError::ParentProjectExists(_) => 3,
         CliError::ProjectNotInVault => 4,
         CliError::VaultOpen(_) => 4,
         CliError::PassphraseInput(_) => 2,
