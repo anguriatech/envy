@@ -1,6 +1,6 @@
 # envy Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-06-10 (011-envy-diff complete)
+Auto-generated from all feature plans. Last updated: 2026-06-16 (011-envy-diff complete)
 
 ## Active Technologies
 - GitHub Actions YAML; Rust 1.85 (stable) as toolchain installed in CI + `actions/checkout@v4`, `dtolnay/rust-toolchain@stable`, `shogo82148/actions-setup-perl@v1` (007-ci-smoke-workflows)
@@ -14,6 +14,7 @@ Auto-generated from all feature plans. Last updated: 2026-06-10 (011-envy-diff c
 - SQLite via `rusqlite` with `bundled-sqlcipher-vendored-openssl` (read-only for this feature) (011-envy-diff)
 - Rust stable (edition 2024, MSRV 1.85) + `clap` (derive), `dialoguer` (Password + MultiSelect), `serde_json`, `zeroize`, `thiserror` — all already in `Cargo.toml`. No new crate added. (012-cli-rotate)
 - SQLite via `rusqlite` with `bundled-sqlcipher-vendored-openssl` (existing vault, read-only for this feature). `envy.enc` artifact on disk (JSON, atomic write via existing helper). (012-cli-rotate)
+- Rust stable (edition 2024, MSRV 1.85) + `clap` (derive), `dialoguer` (Password + MultiSelect), `serde_json`, `zeroize`, `thiserror`, `toml` — all already in `Cargo.toml`. No new crate added. (013-encrypt-strict)
 
 - Rust stable (edition 2024, MSRV 1.85) + `rusqlite` (features: `bundled-sqlcipher`), `uuid` (features: `v4`), `keyring`, `clap` (features: `derive`), `thiserror` (001-vault-db-schema)
 - `aes-gcm` (AES-256-GCM AEAD encryption), `zeroize` (features: `derive`, memory zeroing on drop) (002-crypto-layer)
@@ -58,9 +59,9 @@ cargo audit
 Rust stable (edition 2024, MSRV 1.85): Follow standard conventions
 
 ## Recent Changes
+- 013-encrypt-strict: Added Rust stable (edition 2024, MSRV 1.85) + `clap` (derive), `dialoguer` (Password + MultiSelect), `serde_json`, `zeroize`, `thiserror`, `toml` — all already in `Cargo.toml`. No new crate added.
 - 012-cli-rotate: Added Rust stable (edition 2024, MSRV 1.85) + `clap` (derive), `dialoguer` (Password + MultiSelect), `serde_json`, `zeroize`, `thiserror` — all already in `Cargo.toml`. No new crate added.
 - 011-envy-diff: Complete — `envy diff` / `envy df` command with table + JSON output; `--reveal` flag for values; ANSI colored output; `ChangeType`/`DiffEntry`/`DiffReport` in `src/core/diff.rs`; `EnvNotFound`/`ArtifactUnreadable` error variants; E2E Scenario 9 added; zero new crates
-- 010-status-command: Complete — `envy status` / `envy st` command with table + JSON output; `sync_markers` V2 schema; `seal_env` writes sync marker; `comfy-table = "7"` added; E2E Scenario 8 added
 
 
 <!-- MANUAL ADDITIONS START -->

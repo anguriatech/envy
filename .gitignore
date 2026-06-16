@@ -39,3 +39,4 @@ Thumbs.db
 .specify/integrations/
 .specify/workflows/
 .specify/scripts/bash/setup-tasks.sh
+.specify/feature.json

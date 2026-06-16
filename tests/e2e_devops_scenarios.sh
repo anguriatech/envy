@@ -403,7 +403,9 @@ assert_eq "DB_PASSWORD not in vault after tampering" "1" "$GARBAGE2_EXIT"
 echo ""
 echo -e "${YELLOW}  [Attacker 2] Flipping a byte in nonce field...${RESET}"
 
-# Re-create a clean artifact
+# Re-create a clean artifact (delete the tampered one from sub-test 4a so
+# the strict encrypt in 0.3.1+ can match the passphrase and re-seal).
+rm -f "$TAMPER_ENC"
 (cd "$TAMPER_DIR" && "$ENVY" set "PAYMENT_KEY=sk_live_real_key")
 (cd "$TAMPER_DIR" && ENVY_PASSPHRASE="victim-pass" "$ENVY" encrypt)
 
@@ -767,6 +769,57 @@ assert_eq "decrypt with pass-C exits 0" "0" "$?"
 S10_DEC_B_EXIT=0
 (cd "$S10_DIR" && ENVY_PASSPHRASE='pass-B' "$ENVY" decrypt < /dev/null) || S10_DEC_B_EXIT=$?
 assert_eq "decrypt with old pass-B now exits 1" "1" "$S10_DEC_B_EXIT"
+
+# =============================================================================
+# Scenario 11: Strict `envy encrypt` (013-encrypt-strict)
+# =============================================================================
+section "Scenario 11 — Strict envy encrypt (No Silent Key Rotation)"
+
+S11_DIR="$WORKSPACE/scenario11"
+
+# ── Setup: init, set a secret, seal with passphrase A ────────────────────────
+echo -e "${YELLOW}  [S11] Setup: init + set + seal with passphrase A...${RESET}"
+init_project "$S11_DIR"
+(cd "$S11_DIR" && "$ENVY" set 'SECRET=hunter2')
+(cd "$S11_DIR" && ENVY_PASSPHRASE_DEVELOPMENT='pass-A' "$ENVY" encrypt -e development < /dev/null)
+
+# Capture the SHA-256 of envy.enc before the mismatch attempt.
+S11_SHA_BEFORE=$(sha256sum "$S11_DIR/envy.enc" | awk '{print $1}')
+
+# ── US3: mismatch with existing envelope fails with exit 2 (was: silent rotation) ──
+echo -e "${YELLOW}  [S11] US3: encrypt with wrong passphrase (B) — must fail with exit 2...${RESET}"
+S11_WRONG_OUTPUT=$(cd "$S11_DIR" && \
+  ENVY_PASSPHRASE_DEVELOPMENT='WRONG-pass' \
+  "$ENVY" encrypt -e development < /dev/null 2>&1) || S11_WRONG_EXIT=$?
+assert_eq "encrypt with wrong passphrase exits 2" "2" "$S11_WRONG_EXIT"
+
+# Error message must contain the new hint pointing to `envy rotate`.
+assert_contains "error mentions 'passphrase does not match'" "passphrase does not match" "$S11_WRONG_OUTPUT"
+assert_contains "error mentions 'envy rotate'" "envy rotate" "$S11_WRONG_OUTPUT"
+
+# The artifact MUST be byte-identical to its pre-attempt state (SC-003).
+S11_SHA_AFTER=$(sha256sum "$S11_DIR/envy.enc" | awk '{print $1}')
+assert_eq "envy.enc byte-identical after wrong-pass attempt" "$S11_SHA_BEFORE" "$S11_SHA_AFTER"
+
+# ── US3: global ENVY_PASSPHRASE mismatch also fails ──────────────────────────
+echo -e "${YELLOW}  [S11] US3: global ENVY_PASSPHRASE mismatch — must fail...${RESET}"
+S11_GLOBAL_EXIT=0
+(cd "$S11_DIR" && \
+  ENVY_PASSPHRASE='WRONG-pass' \
+  "$ENVY" encrypt -e development < /dev/null) || S11_GLOBAL_EXIT=$?
+assert_eq "global ENVY_PASSPHRASE mismatch exits 2" "2" "$S11_GLOBAL_EXIT"
+
+# ── US2: matching passphrase still re-seals successfully ──────────────────────
+echo -e "${YELLOW}  [S11] US2: encrypt with correct passphrase (A) — must succeed...${RESET}"
+S11_MATCH_EXIT=0
+(cd "$S11_DIR" && \
+  ENVY_PASSPHRASE_DEVELOPMENT='pass-A' \
+  "$ENVY" encrypt -e development < /dev/null) || S11_MATCH_EXIT=$?
+assert_eq "encrypt with matching passphrase exits 0" "0" "$S11_MATCH_EXIT"
+
+# The artifact MUST have changed (fresh salt + nonce).
+S11_SHA_MATCH=$(sha256sum "$S11_DIR/envy.enc" | awk '{print $1}')
+assert_ne "envy.enc changes after re-seal with matching passphrase" "$S11_SHA_BEFORE" "$S11_SHA_MATCH"
 
 # =============================================================================
 # Summary

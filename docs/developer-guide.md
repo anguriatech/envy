@@ -505,6 +505,18 @@ passphrase becomes invalid for new seals, and any `envy.enc` sealed with the old
 passphrase is permanently invalid. This is the intended behaviour — see the
 spec's Out of Scope section for the rationale.
 
+### 7.5a `envy encrypt` is strict since v0.3.1
+
+`envy encrypt` no longer silently re-seals an envelope with a different passphrase. The contract is:
+
+- If the envelope does not exist in `envy.enc` → create with the user-supplied passphrase.
+- If the envelope exists AND the passphrase matches → re-seal with the same passphrase (a fresh salt + nonce are generated regardless, because `seal_envelope` is called fresh).
+- If the envelope exists AND the passphrase does NOT match → fail with exit 2 and the hint `use envy rotate -e ENV to change the envelope's passphrase.`
+
+This closes the silent-key-rotation gap that was present in v0.3.0 (where a headless `envy encrypt` with a wrong passphrase would silently re-seal the envelope, locking the rest of the team out). The dedicated path for key rotation is `envy rotate` (spec 012, see §7.5 above).
+
+The strict-verify block lives in `cmd_encrypt` in `src/cli/commands.rs`. It calls the existing `core::check_envelope_passphrase` helper (no new core code was added). The interactive-only `confirm_key_rotation` prompt was removed entirely from `src/cli/commands.rs` — `grep -r confirm_key_rotation src/` must return zero matches (SC-006 hard acceptance criterion).
+
 ### 7.6 Layer responsibilities
 
 ```
