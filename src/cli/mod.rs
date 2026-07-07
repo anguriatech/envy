@@ -226,6 +226,23 @@ pub enum Commands {
         env: Option<String>,
     },
 
+    /// Show the local audit trail of secret-touching actions.
+    ///
+    /// Records `set`, `get`, `rm`, and `run` actions (key name and timestamp
+    /// only — never the secret value) in the local vault. Sync/crypto actions
+    /// (`encrypt`, `decrypt`, `rotate`) are not recorded here; their history
+    /// already lives in `envy.enc`'s git log and `envy status`.
+    #[command(visible_alias = "au")]
+    Audit {
+        /// Restrict the report to a single environment (default: all).
+        #[arg(short = 'e', long = "env", value_name = "ENV")]
+        env: Option<String>,
+
+        /// Maximum number of entries to show, newest first.
+        #[arg(long, default_value_t = 50)]
+        limit: i64,
+    },
+
     /// Generate shell completion scripts.
     ///
     /// Prints the completion script for the given shell to stdout.
@@ -532,6 +549,16 @@ pub fn run() -> i32 {
             let artifact = artifact_path(&manifest_path);
             match commands::cmd_rotate(&vault, &master_key, &project_id, &artifact, env.as_deref())
             {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("{}", format_cli_error(&e));
+                    cli_exit_code(&e)
+                }
+            }
+        }
+
+        Commands::Audit { env, limit } => {
+            match commands::cmd_audit(&vault, &project_id, env.as_deref(), limit, cli.format) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{}", format_cli_error(&e));
