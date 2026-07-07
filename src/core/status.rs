@@ -9,7 +9,7 @@
 //! - All functions return `Result<T, CoreError>`.
 //! - `.unwrap()` is prohibited; use `?` or `map_err`.
 
-use crate::db::{EnvironmentStatus, ProjectId, Vault};
+use crate::db::{ProjectId, Vault};
 
 use super::error::CoreError;
 
@@ -58,6 +58,11 @@ pub struct StatusRow {
 
     /// The derived sync state for this environment.
     pub sync_status: SyncStatus,
+
+    /// Names of secrets whose `updated_at` is older than the manifest's
+    /// `rotation_reminder_days` threshold. Empty when nothing is stale.
+    /// Never includes secret values — only key names, safe to print.
+    pub stale_secrets: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -84,11 +89,43 @@ pub fn derive_sync_status(last_modified_at: Option<i64>, sealed_at: Option<i64>)
     }
 }
 
+/// Returns the key names of secrets in `env_id` whose `updated_at` is older
+/// than `threshold_days` days (measured against the current wall-clock time).
+///
+/// Reads only key names and timestamps via [`Vault::list_secrets`] — never
+/// decrypts a value, so this is safe to call from `envy status` (which must
+/// not touch ciphertext or prompt for a passphrase).
+///
+/// A `threshold_days` of `0` disables the reminder entirely (returns empty).
+fn stale_secret_keys(
+    vault: &Vault,
+    env_id: &crate::db::EnvId,
+    threshold_days: u32,
+) -> Result<Vec<String>, CoreError> {
+    if threshold_days == 0 {
+        return Ok(Vec::new());
+    }
+    let threshold_secs = i64::from(threshold_days) * 86_400;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    Ok(vault
+        .list_secrets(env_id)?
+        .into_iter()
+        .filter(|s| now.saturating_sub(s.updated_at) > threshold_secs)
+        .map(|s| s.key)
+        .collect())
+}
+
 /// Returns a [`StatusRow`] for every environment in `project_id`, ordered
 /// alphabetically by environment name.
 ///
 /// Calls [`Vault::environment_status`] in a single DB round-trip, then maps
-/// each row through [`derive_sync_status`].
+/// each row through [`derive_sync_status`]. A second per-environment query
+/// via [`stale_secret_keys`] computes the rotation reminder — negligible cost
+/// at the secret counts this tool is designed for (tens to low hundreds).
 ///
 /// Returns an empty `Vec` if the project has no environments.
 ///
@@ -97,24 +134,26 @@ pub fn derive_sync_status(last_modified_at: Option<i64>, sealed_at: Option<i64>)
 pub fn get_status_report(
     vault: &Vault,
     project_id: &ProjectId,
+    rotation_reminder_days: u32,
 ) -> Result<Vec<StatusRow>, CoreError> {
     let rows = vault
         .environment_status(project_id)
         .map_err(CoreError::Db)?;
 
-    Ok(rows
-        .into_iter()
-        .map(|es: EnvironmentStatus| {
-            let sync_status = derive_sync_status(es.last_modified_at, es.sealed_at);
-            StatusRow {
-                name: es.name,
-                secret_count: es.secret_count,
-                last_modified_at: es.last_modified_at,
-                sealed_at: es.sealed_at,
-                sync_status,
-            }
-        })
-        .collect())
+    let mut result = Vec::with_capacity(rows.len());
+    for es in rows {
+        let sync_status = derive_sync_status(es.last_modified_at, es.sealed_at);
+        let stale_secrets = stale_secret_keys(vault, &es.id, rotation_reminder_days)?;
+        result.push(StatusRow {
+            name: es.name,
+            secret_count: es.secret_count,
+            last_modified_at: es.last_modified_at,
+            sealed_at: es.sealed_at,
+            sync_status,
+            stale_secrets,
+        });
+    }
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------

@@ -474,6 +474,12 @@ fn resolve_passphrase_for_env(
                 ));
             }
         }
+        if confirm {
+            // `confirm` is only `true` when sealing a brand-new envelope —
+            // exactly the moment a strength hint is useful, not on re-entry
+            // of an existing passphrase.
+            print_passphrase_strength_hint(&raw);
+        }
         return Ok(Some(zeroize::Zeroizing::new(raw)));
     }
 
@@ -496,6 +502,9 @@ fn resolve_passphrase_for_env(
                 return Err(CliError::PassphraseInput(
                     "passphrase must not be empty".into(),
                 ));
+            }
+            if confirm {
+                print_passphrase_strength_hint(&raw);
             }
             Ok(Some(zeroize::Zeroizing::new(raw)))
         }
@@ -533,6 +542,40 @@ fn is_headless_mode(env_names: &[String]) -> bool {
 /// Called when the user accepts a Diceware suggestion — the banner is shown
 /// exactly once. Passphrase is printed in bold yellow so it stands out, and
 /// the message reminds the user it will not be shown again (FR-010, SC-005).
+/// Prints an informational (never blocking) passphrase-strength hint to stderr.
+///
+/// Called only when the user types their own new passphrase — never for an
+/// accepted Diceware suggestion (already vetted by construction) and never
+/// when re-entering an *existing* passphrase to unlock an envelope, where a
+/// strength opinion adds noise without actionable value.
+///
+/// The estimate is a coarse character-class heuristic (see
+/// `crate::crypto::strength`); it never rejects a passphrase — `envy encrypt`
+/// and `envy rotate` accept whatever the user confirms.
+fn print_passphrase_strength_hint(passphrase: &str) {
+    use crate::crypto::strength::{classify, estimate_entropy_bits};
+
+    let bits = estimate_entropy_bits(passphrase);
+    let level = classify(bits);
+    let (label, ansi) = match level {
+        crate::crypto::StrengthLevel::VeryWeak => ("very weak", "31"),
+        crate::crypto::StrengthLevel::Weak => ("weak", "31"),
+        crate::crypto::StrengthLevel::Fair => ("fair", "33"),
+        crate::crypto::StrengthLevel::Strong => ("strong", "32"),
+        crate::crypto::StrengthLevel::VeryStrong => ("very strong", "32"),
+    };
+    eprintln!(
+        "  \u{2139} passphrase strength: {} (~{:.0} bits estimated)",
+        colorize(label, ansi),
+        bits
+    );
+    if level.is_weak() {
+        eprintln!(
+            "    hint: press Enter on an empty prompt next time to accept envy's suggested Diceware phrase."
+        );
+    }
+}
+
 fn print_diceware_banner(passphrase: &str) {
     eprintln!(
         "\n  {}\n\n    {}\n\n  {}\n",
@@ -1102,6 +1145,7 @@ fn resolve_rotate_passphrases(
             "new passphrase must not be empty or whitespace".into(),
         ));
     }
+    print_passphrase_strength_hint(&new_raw);
 
     Ok((
         zeroize::Zeroizing::new(current_raw),
@@ -1120,6 +1164,7 @@ struct EnvStatusJson {
     secret_count: i64,
     last_modified_at: Option<String>,
     status: &'static str,
+    stale_secrets: Vec<String>,
 }
 
 /// JSON envelope for the `envy.enc` artifact (T037).
@@ -1267,6 +1312,7 @@ fn build_status_json(rows: &[crate::core::StatusRow], artifact_path: &Path) -> S
                 secret_count: row.secret_count,
                 last_modified_at: row.last_modified_at.map(epoch_to_iso8601),
                 status,
+                stale_secrets: row.stale_secrets.clone(),
             }
         })
         .collect();
@@ -1313,10 +1359,12 @@ pub(super) fn cmd_status(
     project_id: &ProjectId,
     artifact_path: &Path,
     format: OutputFormat,
+    rotation_reminder_days: u32,
 ) -> Result<(), CliError> {
     use crate::core::SyncStatus;
 
-    let rows = crate::core::get_status_report(vault, project_id).map_err(CliError::Core)?;
+    let rows = crate::core::get_status_report(vault, project_id, rotation_reminder_days)
+        .map_err(CliError::Core)?;
 
     // JSON path (T039): serialize and exit early.
     if format == OutputFormat::Json {
@@ -1331,7 +1379,13 @@ pub(super) fn cmd_status(
 
     // Build environment table (T026).
     let mut table = comfy_table::Table::new();
-    table.set_header(vec!["Environment", "Secrets", "Last Modified", "Status"]);
+    table.set_header(vec![
+        "Environment",
+        "Secrets",
+        "Last Modified",
+        "Status",
+        "Rotation",
+    ]);
 
     for row in &rows {
         let last_modified = if row.secret_count == 0 {
@@ -1348,6 +1402,15 @@ pub(super) fn cmd_status(
             SyncStatus::NeverSealed => ("\u{2717} Never Sealed", comfy_table::Color::Red),
         };
 
+        let (rotation_text, rotation_color) = if row.stale_secrets.is_empty() {
+            ("\u{2713} Fresh".to_string(), comfy_table::Color::Green)
+        } else {
+            (
+                format!("\u{26a0} {} due", row.stale_secrets.len()),
+                comfy_table::Color::Yellow,
+            )
+        };
+
         table.add_row(vec![
             comfy_table::Cell::new(&row.name),
             comfy_table::Cell::new(row.secret_count.to_string()),
@@ -1355,10 +1418,27 @@ pub(super) fn cmd_status(
             comfy_table::Cell::new(status_text)
                 .fg(status_color)
                 .add_attribute(comfy_table::Attribute::Bold),
+            comfy_table::Cell::new(rotation_text).fg(rotation_color),
         ]);
     }
 
     println!("{table}");
+
+    // Rotation reminder detail (only printed when at least one secret is stale;
+    // never prints values, only key names, so it's safe without a passphrase).
+    let stale_by_env: Vec<(&str, &Vec<String>)> = rows
+        .iter()
+        .filter(|r| !r.stale_secrets.is_empty())
+        .map(|r| (r.name.as_str(), &r.stale_secrets))
+        .collect();
+    if !stale_by_env.is_empty() {
+        println!(
+            "\n\u{26a0} Rotation reminder (no changes in over {rotation_reminder_days} days):"
+        );
+        for (env_name, keys) in stale_by_env {
+            println!("  {env_name}: {}", keys.join(", "));
+        }
+    }
 
     // Artifact metadata section (T044).
     let meta = read_artifact_metadata(artifact_path);
@@ -3077,7 +3157,7 @@ mod tests {
             .expect("set_secret must succeed");
 
         let artifact_path = tmp.path().join("envy.enc");
-        let result = super::cmd_status(&vault, &pid, &artifact_path, OutputFormat::Table);
+        let result = super::cmd_status(&vault, &pid, &artifact_path, OutputFormat::Table, 90);
         assert!(
             result.is_ok(),
             "cmd_status must return Ok for never-sealed env: {:?}",
@@ -3103,7 +3183,7 @@ mod tests {
             .expect("upsert_sync_marker must succeed");
 
         let artifact_path = tmp.path().join("envy.enc");
-        let result = super::cmd_status(&vault, &pid, &artifact_path, OutputFormat::Table);
+        let result = super::cmd_status(&vault, &pid, &artifact_path, OutputFormat::Table, 90);
         assert!(
             result.is_ok(),
             "cmd_status must return Ok for in-sync env: {:?}",
@@ -3118,7 +3198,7 @@ mod tests {
         let (vault, pid) = open_test_vault(&tmp);
 
         let artifact_path = tmp.path().join("envy.enc");
-        let result = super::cmd_status(&vault, &pid, &artifact_path, OutputFormat::Table);
+        let result = super::cmd_status(&vault, &pid, &artifact_path, OutputFormat::Table, 90);
         assert!(
             result.is_ok(),
             "cmd_status on empty vault must return Ok: {:?}",
@@ -3190,7 +3270,7 @@ mod tests {
         enc_result.expect("cmd_encrypt must succeed");
 
         // After encrypt the sync marker must exist → status returns Ok.
-        let result = super::cmd_status(&vault, &pid, &artifact_path, OutputFormat::Table);
+        let result = super::cmd_status(&vault, &pid, &artifact_path, OutputFormat::Table, 90);
         assert!(
             result.is_ok(),
             "cmd_status must return Ok after encrypt: {:?}",
@@ -3198,7 +3278,7 @@ mod tests {
         );
 
         // Verify the environment is actually InSync via the status report.
-        let rows = crate::core::get_status_report(&vault, &pid).expect("get_status_report");
+        let rows = crate::core::get_status_report(&vault, &pid, 90).expect("get_status_report");
         let dev = rows
             .iter()
             .find(|r| r.name == "development")
@@ -3242,14 +3322,14 @@ mod tests {
         .expect("set_secret after encrypt must succeed");
 
         // Status must return Ok and environment must be Modified.
-        let result = super::cmd_status(&vault, &pid, &artifact_path, OutputFormat::Table);
+        let result = super::cmd_status(&vault, &pid, &artifact_path, OutputFormat::Table, 90);
         assert!(
             result.is_ok(),
             "cmd_status must return Ok after set: {:?}",
             result.err()
         );
 
-        let rows = crate::core::get_status_report(&vault, &pid).expect("get_status_report");
+        let rows = crate::core::get_status_report(&vault, &pid, 90).expect("get_status_report");
         let dev = rows
             .iter()
             .find(|r| r.name == "development")
@@ -3276,7 +3356,7 @@ mod tests {
         let artifact_path = tmp.path().join("envy.enc");
 
         // Capture output via write_status_json using a Vec<u8> writer.
-        let rows = crate::core::get_status_report(&vault, &pid).expect("get_status_report");
+        let rows = crate::core::get_status_report(&vault, &pid, 90).expect("get_status_report");
         let mut buf: Vec<u8> = Vec::new();
         super::write_status_json(&rows, &artifact_path, &mut buf)
             .expect("write_status_json must succeed");
@@ -3313,7 +3393,7 @@ mod tests {
             .expect("upsert_sync_marker must succeed");
 
         let artifact_path = tmp.path().join("envy.enc");
-        let rows = crate::core::get_status_report(&vault, &pid).expect("get_status_report");
+        let rows = crate::core::get_status_report(&vault, &pid, 90).expect("get_status_report");
         let mut buf: Vec<u8> = Vec::new();
         super::write_status_json(&rows, &artifact_path, &mut buf)
             .expect("write_status_json must succeed");
@@ -3357,7 +3437,7 @@ mod tests {
             .expect("set_secret must succeed");
 
         let nonexistent_artifact = tmp.path().join("no-such-file.enc");
-        let result = super::cmd_status(&vault, &pid, &nonexistent_artifact, OutputFormat::Table);
+        let result = super::cmd_status(&vault, &pid, &nonexistent_artifact, OutputFormat::Table, 90);
         assert!(
             result.is_ok(),
             "cmd_status must return Ok when artifact not found: {:?}",
@@ -3376,7 +3456,7 @@ mod tests {
         let bad_artifact = tmp.path().join("bad.enc");
         std::fs::write(&bad_artifact, b"not valid json").expect("write must succeed");
 
-        let result = super::cmd_status(&vault, &pid, &bad_artifact, OutputFormat::Table);
+        let result = super::cmd_status(&vault, &pid, &bad_artifact, OutputFormat::Table, 90);
         assert!(
             result.is_ok(),
             "cmd_status must return Ok when artifact is malformed: {:?}",
@@ -3393,7 +3473,7 @@ mod tests {
             .expect("set_secret must succeed");
 
         let nonexistent = tmp.path().join("missing.enc");
-        let rows = crate::core::get_status_report(&vault, &pid).expect("get_status_report");
+        let rows = crate::core::get_status_report(&vault, &pid, 90).expect("get_status_report");
         let mut buf: Vec<u8> = Vec::new();
         super::write_status_json(&rows, &nonexistent, &mut buf)
             .expect("write_status_json must succeed");

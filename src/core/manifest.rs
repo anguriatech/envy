@@ -21,6 +21,19 @@ use super::CoreError;
 pub struct Manifest {
     /// The UUID v4 that links this directory tree to its vault entry.
     pub project_id: String,
+
+    /// Number of days a secret can go without being updated before `envy status`
+    /// flags it as due for rotation. Absent in manifests written before this
+    /// field existed — `serde(default)` keeps those files parseable unchanged.
+    #[serde(default = "default_rotation_reminder_days")]
+    pub rotation_reminder_days: u32,
+}
+
+/// Default rotation reminder threshold (90 days) used when `envy.toml` omits
+/// the field, or when the field is missing from manifests created by older
+/// `envy` versions.
+fn default_rotation_reminder_days() -> u32 {
+    90
 }
 
 // ---------------------------------------------------------------------------
@@ -82,7 +95,7 @@ pub fn create_manifest(target_dir: &Path, project_id: &str) -> Result<(), CoreEr
     // The project_id is always a UUID (alphanumeric + hyphens), so no TOML
     // escaping is required.
     let content = format!(
-        "# Created by `envy init`. Do not delete — this file links the directory to its vault.\nproject_id = \"{}\"\n",
+        "# Created by `envy init`. Do not delete — this file links the directory to its vault.\nproject_id = \"{}\"\n\n# Days a secret can go unmodified before `envy status` flags it for rotation.\n# Uncomment to override the default (90).\n# rotation_reminder_days = 90\n",
         project_id
     );
     // `create_new(true)` fails with AlreadyExists if the file exists,
