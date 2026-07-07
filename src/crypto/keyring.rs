@@ -7,12 +7,6 @@
 //!
 //! # Public API
 //! - [`get_or_create_master_key`] — fetch or generate the master key.
-//! - [`set_master_key`] — overwrite the stored master key (used by `envy key import`
-//!   to restore from a recovery file — see `crypto::artifact` for the encryption
-//!   used to protect that file).
-//! - [`encode_key_hex`] / [`decode_key_hex`] — the same hex encoding used for
-//!   keyring storage, exposed so the recovery-file flow doesn't invent a second
-//!   representation of the same 32 bytes.
 
 use aes_gcm::{
     Aes256Gcm,
@@ -130,47 +124,6 @@ pub fn get_or_create_master_key() -> Result<Zeroizing<[u8; 32]>, CryptoError> {
     }
 }
 
-/// Hex-encodes a 32-byte key using the same format persisted in the OS keyring.
-///
-/// Used by `envy key export` to write the master key into a recovery file —
-/// always inside an encrypted envelope (see `crypto::artifact::seal_envelope`),
-/// never in the clear.
-pub fn encode_key_hex(key: &[u8; 32]) -> String {
-    encode_key(key)
-}
-
-/// Decodes a hex string produced by [`encode_key_hex`] back into a 32-byte key.
-///
-/// # Errors
-/// - [`CryptoError::KeyCorrupted`] if `s` is not exactly 64 hex characters.
-pub fn decode_key_hex(s: &str) -> Result<[u8; 32], CryptoError> {
-    decode_key(s)
-}
-
-/// Overwrites the OS Credential Manager entry with `key`.
-///
-/// Used exclusively by `envy key import` to restore a master key from a
-/// recovery file created by `envy key export`.
-///
-/// # Security
-/// This **overwrites** any existing master key. If a `vault.db` already
-/// exists locally and was encrypted under a *different* key, it becomes
-/// permanently unreadable after this call unless `key` happens to match.
-/// Callers (the CLI layer) MUST confirm this with the user before calling —
-/// this function performs no such check itself.
-///
-/// # Errors
-/// - [`CryptoError::KeyringUnavailable`] if the OS Credential Manager entry
-///   cannot be created or written.
-pub fn set_master_key(key: &[u8; 32]) -> Result<(), CryptoError> {
-    let entry = keyring::Entry::new(SERVICE_NAME, ACCOUNT_NAME)
-        .map_err(|e| CryptoError::KeyringUnavailable(e.to_string()))?;
-    entry
-        .set_password(&encode_key(key))
-        .map_err(|e| CryptoError::KeyringUnavailable(e.to_string()))?;
-    Ok(())
-}
-
 /// If `ENVY_PASSPHRASE` or `CI` is set, returns a deterministic zero ephemeral key so
 /// that headless CI environments (no D-Bus / Secret Service) can still operate against
 /// an ephemeral vault. Otherwise propagates the original [`CryptoError::KeyringUnavailable`].
@@ -206,35 +159,6 @@ mod tests {
         assert_eq!(
             *key1, *key2,
             "key must be identical on repeated calls (idempotent)"
-        );
-    }
-
-    #[test]
-    fn encode_decode_key_hex_round_trip() {
-        let key = [0x7Au8; 32];
-        let hex = encode_key_hex(&key);
-        assert_eq!(hex.len(), 64);
-        let decoded = decode_key_hex(&hex).expect("decode must succeed");
-        assert_eq!(decoded, key);
-    }
-
-    #[test]
-    fn decode_key_hex_rejects_malformed_input() {
-        let result = decode_key_hex("not-hex-and-wrong-length");
-        assert!(matches!(result, Err(CryptoError::KeyCorrupted)));
-    }
-
-    // Integration test: requires a live Secret Service / keyring daemon.
-    // Marked #[ignore] for the same reason as get_or_create_master_key_is_idempotent.
-    #[test]
-    #[ignore]
-    fn set_master_key_then_get_or_create_returns_it() {
-        let key = [0x11u8; 32];
-        set_master_key(&key).expect("set_master_key must succeed with a live keyring daemon");
-        let fetched = get_or_create_master_key().expect("must succeed with a live keyring daemon");
-        assert_eq!(
-            *fetched, key,
-            "get_or_create must return the key we just set"
         );
     }
 
