@@ -9,6 +9,12 @@
 //! - MUST NOT import from `crate::core` for DB/crypto operations — use Core functions.
 //! - MAY call `crate::db::Vault::open` and `crate::crypto::get_or_create_master_key`
 //!   as the sole permitted infrastructure exceptions.
+//! - `envy key export`/`import` (see [`commands::cmd_key_export`],
+//!   [`commands::cmd_key_import`]) are a second, narrower exception: they
+//!   manage the master key's lifecycle directly via `crate::crypto::{encode_key_hex,
+//!   decode_key_hex, set_master_key}` and the existing `crate::crypto::artifact`
+//!   envelope, since master-key backup/restore has no `core` representation
+//!   (it isn't tied to any one project's vault).
 
 mod commands;
 mod error;
@@ -275,6 +281,56 @@ pub enum Commands {
         /// Target shell.
         shell: clap_complete::Shell,
     },
+
+    /// Back up or restore the local vault master key.
+    ///
+    /// The master key normally lives ONLY in the OS Credential Manager and is
+    /// never written to disk. If it's lost (OS reinstall, keychain wiped, an
+    /// ephemeral VM/container), the local vault becomes permanently
+    /// unreadable — there is no other copy. `envy key export`/`import` are an
+    /// opt-in, explicit way to create (and later restore from) an offline
+    /// backup, protected the same way `envy.enc` is (Argon2id + AES-256-GCM).
+    ///
+    /// This command is independent of any single project: it operates on the
+    /// one master key shared by every `envy` project on this machine, so it
+    /// works even outside a directory with `envy.toml`.
+    Key {
+        #[command(subcommand)]
+        action: KeyAction,
+    },
+}
+
+/// Subcommands of `envy key`.
+#[derive(Subcommand)]
+pub enum KeyAction {
+    /// Write an encrypted backup of the local master key to a file.
+    ///
+    /// Prompts for a recovery passphrase (or reads `ENVY_KEY_RECOVERY_PASSPHRASE`
+    /// for headless use). Store the resulting file somewhere OFFLINE and
+    /// separate from this machine — a password manager, a safe, cold storage.
+    /// Anyone with both the file and the passphrase can decrypt your vault.
+    Export {
+        /// Output file path (default: ./envy-key-recovery.json). Refuses to
+        /// overwrite an existing file.
+        #[arg(long, value_name = "FILE")]
+        output: Option<std::path::PathBuf>,
+    },
+
+    /// Restore the master key from a recovery file into the OS Credential Manager.
+    ///
+    /// This OVERWRITES the current master key. If a local vault already
+    /// exists and was encrypted under a different key, it becomes
+    /// permanently unreadable unless the imported key matches. Interactive
+    /// mode asks for confirmation when a local vault is present; use
+    /// `--force` to skip the prompt in scripts.
+    Import {
+        /// Path to a file created by `envy key export`.
+        input: std::path::PathBuf,
+
+        /// Skip the confirmation prompt when a local vault already exists.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -332,6 +388,29 @@ pub fn run() -> i32 {
             eprintln!("error: cannot create vault directory: {e}");
             return 4;
         }
+    }
+
+    // --- Key: operates on the one machine-wide master key, independent of
+    // any project manifest or vault.db — never resolve a manifest for it. ---
+    if let Commands::Key { action } = cli.command {
+        return match action {
+            KeyAction::Export { output } => match commands::cmd_key_export(output.as_deref()) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("{}", format_cli_error(&e));
+                    cli_exit_code(&e)
+                }
+            },
+            KeyAction::Import { input, force } => {
+                match commands::cmd_key_import(&input, force) {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        eprintln!("{}", format_cli_error(&e));
+                        cli_exit_code(&e)
+                    }
+                }
+            }
+        };
     }
 
     // --- Init is special: it manages its own vault lifecycle. ---
@@ -608,6 +687,8 @@ pub fn run() -> i32 {
                 }
             }
         }
+
+        Commands::Key { .. } => unreachable!("Key is handled above"),
 
         Commands::Completions { .. } => unreachable!("Completions is handled above"),
     }
