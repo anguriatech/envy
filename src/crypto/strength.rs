@@ -58,7 +58,7 @@ pub fn estimate_entropy_bits(passphrase: &str) -> f64 {
         .chars()
         .any(|c| c.is_ascii() && !c.is_ascii_alphanumeric() && c != ' ');
     let has_space = passphrase.contains(' ');
-    let has_non_ascii = passphrase.chars().any(|c| !c.is_ascii());
+    let has_non_ascii = !passphrase.is_ascii();
 
     let mut charset_size: u32 = 0;
     if has_lower {
