@@ -1552,6 +1552,89 @@ fn write_audit_json(
 }
 
 // ---------------------------------------------------------------------------
+// cmd_scan — vault-leak scanner
+// ---------------------------------------------------------------------------
+
+/// Scans the project's working tree for plaintext copies of vault secrets.
+///
+/// Returns `Ok(true)` if at least one leak was found (exit 1), `Ok(false)`
+/// if clean (exit 0) — same `diff(1)` convention as `cmd_diff`, so this is
+/// safe to gate a pre-commit hook or CI step on.
+pub(super) fn cmd_scan(
+    vault: &Vault,
+    master_key: &[u8; 32],
+    project_id: &ProjectId,
+    env: Option<&str>,
+    root: &Path,
+    format: OutputFormat,
+    reveal: bool,
+) -> Result<bool, CliError> {
+    let matches = crate::core::scan_for_leaks(vault, master_key, project_id, env, root, reveal)
+        .map_err(CliError::Core)?;
+
+    if format == OutputFormat::Json {
+        write_scan_json(&matches, &mut std::io::stdout())?;
+        return Ok(!matches.is_empty());
+    }
+
+    if matches.is_empty() {
+        println!("envy scan: no leaked secrets found.");
+        return Ok(false);
+    }
+
+    if reveal {
+        eprintln!("\u{26a0} Warning: secret values are visible in the output below.");
+        eprintln!();
+    }
+
+    println!("envy scan: found {} potential leak(s)\n", matches.len());
+    for m in &matches {
+        println!(
+            "  {}:{}  {} ({})",
+            m.path.display(),
+            m.line,
+            m.key,
+            m.environment
+        );
+        if let Some(v) = &m.value {
+            println!("    value: {}", **v);
+        }
+    }
+    println!(
+        "\n{} leak(s) found. Rotate the affected secret(s) and remove the plaintext copy.",
+        matches.len()
+    );
+    Ok(true)
+}
+
+/// Serializes the scan report as a JSON array to `writer`.
+fn write_scan_json(
+    matches: &[crate::core::ScanMatch],
+    writer: &mut impl std::io::Write,
+) -> Result<(), CliError> {
+    let items: Vec<serde_json::Value> = matches
+        .iter()
+        .map(|m| {
+            let mut v = serde_json::json!({
+                "key": m.key,
+                "environment": m.environment,
+                "path": m.path.display().to_string(),
+                "line": m.line,
+            });
+            if let Some(val) = &m.value {
+                v["value"] = serde_json::Value::String(val.to_string());
+            }
+            v
+        })
+        .collect();
+
+    serde_json::to_writer_pretty(&mut *writer, &items)
+        .map_err(|e| CliError::Output(e.to_string()))?;
+    writeln!(writer).map_err(|e| CliError::Output(e.to_string()))?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // T014 — Color helpers for diff output
 // ---------------------------------------------------------------------------
 

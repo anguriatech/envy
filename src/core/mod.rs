@@ -10,6 +10,7 @@ pub mod diff;
 mod error;
 mod manifest;
 mod ops;
+pub mod scan;
 pub mod status;
 pub mod sync;
 
@@ -21,6 +22,7 @@ pub use ops::{
     DEFAULT_ENV, delete_secret, get_env_secrets, get_secret, list_secret_keys,
     list_secrets_with_values, set_secret,
 };
+pub use scan::{ScanMatch, scan_for_leaks};
 pub use status::{StatusRow, SyncStatus, derive_sync_status, get_status_report};
 pub use sync::{
     SyncError, UnsealResult, check_envelope_passphrase, new_empty_artifact, read_artifact,
