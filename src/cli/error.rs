@@ -77,6 +77,16 @@ pub enum CliError {
     /// (currently only `envy key import` when a local vault already exists).
     #[error("aborted: {0}")]
     Aborted(String),
+
+    /// `envy hooks install` could not find a `.git` directory above the
+    /// current project.
+    #[error("no .git directory found above the current project \u{2014} `envy hooks install` requires a git repository")]
+    GitRepoNotFound,
+
+    /// `envy hooks install` found an existing hook file that wasn't
+    /// installed by envy, and `--force` was not given.
+    #[error("{0} already exists and was not installed by envy \u{2014} re-run with --force to back it up and replace it")]
+    HookConflict(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +160,8 @@ pub fn cli_exit_code(e: &CliError) -> i32 {
         CliError::KeyRecoveryFileExists(_) => 3,
         CliError::KeyRecoveryFileInvalid(_) => 5,
         CliError::Aborted(_) => 3,
+        CliError::GitRepoNotFound => 1,
+        CliError::HookConflict(_) => 3,
     }
 }
 

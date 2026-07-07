@@ -298,6 +298,33 @@ pub enum Commands {
         #[command(subcommand)]
         action: KeyAction,
     },
+
+    /// Install a git hook that guards commits against leaked secrets.
+    ///
+    /// The installed `pre-commit` hook runs `envy scan` and blocks the
+    /// commit if a vault secret's plaintext value is found in a staged
+    /// file. It also prints a non-blocking warning if `envy status` shows
+    /// unsealed drift. Nothing leaves the machine — this is pure local
+    /// git tooling, no network or CI dependency required.
+    Hooks {
+        #[command(subcommand)]
+        action: HooksAction,
+    },
+}
+
+/// Subcommands of `envy hooks`.
+#[derive(Subcommand)]
+pub enum HooksAction {
+    /// Install (or reinstall) the `pre-commit` hook in this project's `.git/hooks`.
+    ///
+    /// Refuses to overwrite a pre-existing hook that envy didn't install
+    /// unless `--force` is given, in which case the existing file is backed
+    /// up first (`pre-commit.envy-backup`), never silently discarded.
+    Install {
+        /// Overwrite an existing, non-envy pre-commit hook (after backing it up).
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 /// Subcommands of `envy key`.
@@ -441,6 +468,22 @@ pub fn run() -> i32 {
             return core_exit_code(&e);
         }
     };
+
+    // --- Hooks: only needs the project root (manifest_path) — installing a
+    // git hook never requires the master key or an open vault. ---
+    if let Commands::Hooks { action } = cli.command {
+        return match action {
+            HooksAction::Install { force } => {
+                match commands::cmd_hooks_install(&manifest_path, force) {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        eprintln!("{}", format_cli_error(&e));
+                        cli_exit_code(&e)
+                    }
+                }
+            }
+        };
+    }
 
     let master_key = match crate::crypto::get_or_create_master_key() {
         Ok(k) => k,
@@ -689,6 +732,8 @@ pub fn run() -> i32 {
         }
 
         Commands::Key { .. } => unreachable!("Key is handled above"),
+
+        Commands::Hooks { .. } => unreachable!("Hooks is handled above"),
 
         Commands::Completions { .. } => unreachable!("Completions is handled above"),
     }

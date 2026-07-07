@@ -1847,6 +1847,151 @@ pub(super) fn cmd_key_import(input: &Path, force: bool) -> Result<(), CliError> 
 }
 
 // ---------------------------------------------------------------------------
+// cmd_hooks_install — pre-commit git hook installer
+// ---------------------------------------------------------------------------
+
+/// Marker line embedded in every hook envy installs. Its presence is how
+/// `cmd_hooks_install` tells "an envy-managed hook, safe to reinstall over"
+/// apart from "a foreign hook the user wrote, needs --force + backup".
+const HOOK_MARKER: &str = "# envy-hook: pre-commit v1";
+
+/// Content of the installed `pre-commit` hook.
+///
+/// A POSIX shell script — runs under Git Bash's bundled `sh` on Windows and
+/// under `/bin/sh` on Unix, so the same file works on every platform `envy`
+/// itself supports. Blocks the commit only on a confirmed secret leak
+/// (`envy scan` exit code 1); a stale `envy.enc` (drift) is a non-blocking
+/// warning, since committing code before re-sealing is often intentional.
+fn pre_commit_hook_script() -> String {
+    format!(
+        r#"#!/bin/sh
+{marker}
+# Installed by `envy hooks install`. Do not edit by hand -- re-run
+# `envy hooks install --force` to update it instead.
+#
+# Skip once:  git commit --no-verify
+# Uninstall:  delete this file
+
+if ! command -v envy >/dev/null 2>&1; then
+    echo "envy: 'envy' not found on PATH -- skipping pre-commit checks" >&2
+    exit 0
+fi
+
+envy scan
+scan_exit=$?
+if [ "$scan_exit" -eq 1 ]; then
+    echo "" >&2
+    echo "envy: blocked -- a vault secret's plaintext value was found in a file" >&2
+    echo "you're about to commit. Run 'envy scan --reveal' for details." >&2
+    echo "Bypass once with: git commit --no-verify" >&2
+    exit 1
+elif [ "$scan_exit" -ge 2 ]; then
+    echo "envy: 'envy scan' failed to run (exit $scan_exit) -- not blocking commit" >&2
+fi
+
+status_json=$(envy status --format json 2>/dev/null)
+if printf '%s' "$status_json" | grep -q '"modified"'; then
+    echo "" >&2
+    echo "envy: warning -- one or more environments have unsealed changes." >&2
+    echo "Run 'envy status' then 'envy encrypt' if teammates should see them too." >&2
+fi
+
+exit 0
+"#,
+        marker = HOOK_MARKER
+    )
+}
+
+/// Walks upward from `start` looking for a `.git` entry, returning the
+/// directory that should contain hook scripts.
+///
+/// Handles both a plain repository (`.git` is a directory — hooks live in
+/// `.git/hooks`) and a linked worktree or submodule (`.git` is a file
+/// containing `gitdir: <path>` — hooks live in `<path>/hooks`).
+///
+/// Does not consult `core.hooksPath`; a repo using a custom hooks directory
+/// is a deliberately out-of-scope edge case for this first version.
+fn find_git_hooks_dir(start: &Path) -> Option<std::path::PathBuf> {
+    let mut dir = start.to_path_buf();
+    loop {
+        let candidate = dir.join(".git");
+        if candidate.is_dir() {
+            return Some(candidate.join("hooks"));
+        }
+        if candidate.is_file() {
+            let content = std::fs::read_to_string(&candidate).ok()?;
+            let gitdir_line = content.lines().find_map(|l| l.strip_prefix("gitdir: "))?;
+            let gitdir = dir.join(gitdir_line.trim());
+            return Some(gitdir.join("hooks"));
+        }
+        match dir.parent() {
+            Some(parent) => dir = parent.to_path_buf(),
+            None => return None,
+        }
+    }
+}
+
+/// Installs the `pre-commit` hook for the git repository containing `project_root`.
+///
+/// # Errors
+/// - [`CliError::GitRepoNotFound`] if no `.git` is found in `project_root` or
+///   any ancestor.
+/// - [`CliError::HookConflict`] if a non-envy `pre-commit` hook already
+///   exists and `force` is `false`.
+/// - [`CliError::Output`] on any I/O failure writing the hook or its backup.
+pub(super) fn cmd_hooks_install(project_root: &Path, force: bool) -> Result<(), CliError> {
+    let hooks_dir = find_git_hooks_dir(project_root).ok_or(CliError::GitRepoNotFound)?;
+    std::fs::create_dir_all(&hooks_dir).map_err(|e| CliError::Output(e.to_string()))?;
+
+    let hook_path = hooks_dir.join("pre-commit");
+    if hook_path.exists() {
+        let existing =
+            std::fs::read_to_string(&hook_path).map_err(|e| CliError::Output(e.to_string()))?;
+        let is_envy_managed = existing.contains(HOOK_MARKER);
+        if !is_envy_managed && !force {
+            return Err(CliError::HookConflict(hook_path.display().to_string()));
+        }
+        if !is_envy_managed || force {
+            // Always back up before overwriting anything envy didn't just
+            // write in a previous run of this exact command.
+            let backup_path = hooks_dir.join("pre-commit.envy-backup");
+            std::fs::write(&backup_path, &existing).map_err(|e| CliError::Output(e.to_string()))?;
+            println!(
+                "  existing hook backed up to {}",
+                backup_path.display()
+            );
+        }
+    }
+
+    std::fs::write(&hook_path, pre_commit_hook_script())
+        .map_err(|e| CliError::Output(e.to_string()))?;
+    set_executable(&hook_path).map_err(|e| CliError::Output(e.to_string()))?;
+
+    println!(
+        "\u{2713} Installed pre-commit hook at {}.",
+        hook_path.display()
+    );
+    println!("  It runs `envy scan` on every commit and blocks it if a vault secret leaks.");
+    Ok(())
+}
+
+/// Sets the executable permission bit on Unix. A no-op on Windows, where
+/// Git for Windows invokes hooks via its bundled `sh` regardless of the
+/// filesystem's (largely notional, on NTFS) executable bit.
+#[cfg(unix)]
+fn set_executable(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(path)?.permissions();
+    perms.set_mode(perms.mode() | 0o111);
+    std::fs::set_permissions(path, perms)
+}
+
+#[cfg(not(unix))]
+fn set_executable(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // T014 — Color helpers for diff output
 // ---------------------------------------------------------------------------
 
@@ -2295,6 +2440,118 @@ mod tests {
             crate::core::list_audit(&vault, &pid, Some("production"), 50).expect("list_audit");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].key.as_deref(), Some("PROD_KEY"));
+    }
+
+    // -----------------------------------------------------------------------
+    // cmd_hooks_install / find_git_hooks_dir
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn find_git_hooks_dir_locates_dot_git_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(tmp.path().join(".git")).expect("mkdir .git");
+        let nested = tmp.path().join("a").join("b");
+        std::fs::create_dir_all(&nested).expect("mkdir nested");
+
+        let hooks_dir = super::find_git_hooks_dir(&nested).expect("must find .git");
+        assert_eq!(hooks_dir, tmp.path().join(".git").join("hooks"));
+    }
+
+    #[test]
+    fn find_git_hooks_dir_resolves_worktree_gitfile() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let real_gitdir = tmp.path().join("real-git-common-dir");
+        std::fs::create_dir_all(&real_gitdir).expect("mkdir real gitdir");
+
+        let worktree = tmp.path().join("worktree");
+        std::fs::create_dir_all(&worktree).expect("mkdir worktree");
+        std::fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}\n", real_gitdir.display()),
+        )
+        .expect("write .git file");
+
+        let hooks_dir = super::find_git_hooks_dir(&worktree).expect("must resolve gitfile");
+        assert_eq!(hooks_dir, real_gitdir.join("hooks"));
+    }
+
+    #[test]
+    fn find_git_hooks_dir_returns_none_outside_any_repo() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // A bare temp dir with no .git anywhere above it (within the temp tree).
+        assert!(super::find_git_hooks_dir(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn cmd_hooks_install_writes_marked_hook() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(tmp.path().join(".git")).expect("mkdir .git");
+
+        super::cmd_hooks_install(tmp.path(), false).expect("install must succeed");
+
+        let hook_path = tmp.path().join(".git").join("hooks").join("pre-commit");
+        let content = std::fs::read_to_string(&hook_path).expect("read hook");
+        assert!(content.contains(super::HOOK_MARKER));
+        assert!(content.contains("envy scan"));
+    }
+
+    #[test]
+    fn cmd_hooks_install_is_idempotent_over_its_own_hook() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(tmp.path().join(".git")).expect("mkdir .git");
+
+        super::cmd_hooks_install(tmp.path(), false).expect("first install");
+        // Re-running without --force must succeed because the existing hook
+        // carries the envy marker.
+        super::cmd_hooks_install(tmp.path(), false).expect("second install must not conflict");
+    }
+
+    #[test]
+    fn cmd_hooks_install_refuses_foreign_hook_without_force() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(tmp.path().join(".git").join("hooks")).expect("mkdir hooks");
+        let hook_path = tmp.path().join(".git").join("hooks").join("pre-commit");
+        std::fs::write(&hook_path, "#!/bin/sh\necho custom user hook\n").expect("write foreign hook");
+
+        let result = super::cmd_hooks_install(tmp.path(), false);
+        assert!(
+            matches!(result, Err(CliError::HookConflict(_))),
+            "must refuse to overwrite a foreign hook without --force, got: {:?}",
+            result
+        );
+        let content = std::fs::read_to_string(&hook_path).expect("read hook");
+        assert_eq!(
+            content, "#!/bin/sh\necho custom user hook\n",
+            "foreign hook content must be untouched"
+        );
+    }
+
+    #[test]
+    fn cmd_hooks_install_backs_up_foreign_hook_with_force() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(tmp.path().join(".git").join("hooks")).expect("mkdir hooks");
+        let hook_path = tmp.path().join(".git").join("hooks").join("pre-commit");
+        std::fs::write(&hook_path, "#!/bin/sh\necho custom user hook\n").expect("write foreign hook");
+
+        super::cmd_hooks_install(tmp.path(), true).expect("install with --force must succeed");
+
+        let backup_path = tmp
+            .path()
+            .join(".git")
+            .join("hooks")
+            .join("pre-commit.envy-backup");
+        let backup_content = std::fs::read_to_string(&backup_path).expect("read backup");
+        assert_eq!(backup_content, "#!/bin/sh\necho custom user hook\n");
+
+        let new_content = std::fs::read_to_string(&hook_path).expect("read new hook");
+        assert!(new_content.contains(super::HOOK_MARKER));
+    }
+
+    #[test]
+    fn cmd_hooks_install_returns_git_repo_not_found_outside_a_repo() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let result = super::cmd_hooks_install(tmp.path(), false);
+        assert!(matches!(result, Err(CliError::GitRepoNotFound)));
     }
 
     // -----------------------------------------------------------------------
