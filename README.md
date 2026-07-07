@@ -332,8 +332,6 @@ Every secret value travels through the codebase in `zeroize::Zeroizing<String>`.
 | `envy rotate [-e ENV]` | — | Re-seal an envelope with a new passphrase (verifies current first) |
 | `envy scan [-e ENV] [--reveal]` | — | Scan the working tree for plaintext copies of vault secrets |
 | `envy audit [-e ENV] [--limit N]` | `au` | Show the local history of `set`/`get`/`rm`/`run` actions |
-| `envy key export [--output FILE]` | — | Back up the local master key to an encrypted recovery file |
-| `envy key import FILE [--force]` | — | Restore the master key from a recovery file |
 | `envy hooks install [--force]` | — | Install a pre-commit hook that blocks commits leaking a vault secret |
 | `envy completions SHELL` | — | Print shell completion script to stdout |
 
@@ -477,19 +475,6 @@ envy audit -e production   # filter to one environment
 
 Sync/crypto actions (`encrypt`/`decrypt`/`rotate`) aren't recorded here; that history already lives in `envy.enc`'s git log and `envy status`.
 
-### Master key recovery kit
-
-The vault master key normally lives *only* in the OS Credential Manager. If it's lost — OS reinstall, wiped keychain, an ephemeral VM — `vault.db` becomes permanently unreadable, with no other copy. `envy key export`/`import` are an explicit, opt-in way to back it up, protected the same way `envy.enc` is (Argon2id + AES-256-GCM):
-
-```bash
-envy key export --output envy-key-recovery.json
-# Store this file OFFLINE — a password manager or a safe, never this repo.
-
-envy key import envy-key-recovery.json
-```
-
-`import` asks for confirmation if a local vault already exists (importing an unrelated key would make it unreadable); use `--force` in scripts.
-
 ### Pre-commit hook
 
 `envy hooks install` writes a `pre-commit` hook that runs `envy scan` on every commit — attempting to commit a leaked secret is blocked, not just logged:
@@ -515,9 +500,9 @@ It also prints a non-blocking warning when `envy status` shows unsealed drift. N
 | `0` | Success; partial decrypt (≥ 1 env imported); `envy diff`/`envy scan` — no differences/leaks found |
 | `1` | Not found (manifest, secret, `envy.enc`, `.git`); zero envs imported; `envy diff` — differences found; `envy scan` — leak(s) found |
 | `2` | Invalid input (key name, assignment format, empty or wrong passphrase) |
-| `3` | Initialisation conflict; environment not found in vault or artifact; `envy key import`/`envy hooks install` — conflict or aborted |
+| `3` | Initialisation conflict; environment not found in vault or artifact; `envy hooks install` — conflict |
 | `4` | Vault or crypto failure |
-| `5` | `envy.enc` unreadable (malformed JSON or unsupported schema version); `envy key import` — recovery file unreadable |
+| `5` | `envy.enc` unreadable (malformed JSON or unsupported schema version) |
 | `127` | Child binary not found (`envy run`) |
 | `N` | Child process exit code (proxied exactly by `envy run`) |
 
@@ -566,7 +551,7 @@ cd envy && cargo install --path .
 
 ## Roadmap
 
-Envy has completed **Phase 1** (encrypted local vault), **Phase 2** (GitOps sync & CI/CD), **Phase 2.x** (multi-env encrypt, output formats, sync status, pre-encrypt diff), and **Phase 2.y** (rotation reminders, passphrase strength hints, local audit trail, vault-leak scanner, master key recovery kit, pre-commit hook).
+Envy has completed **Phase 1** (encrypted local vault), **Phase 2** (GitOps sync & CI/CD), **Phase 2.x** (multi-env encrypt, output formats, sync status, pre-encrypt diff), and **Phase 2.y** (rotation reminders, passphrase strength hints, local audit trail, vault-leak scanner, pre-commit hook).
 
 **Phase 3 — Ecosystem & GUI**: An official VS Code Extension to make secret management visual and seamless, without leaving the editor.
 

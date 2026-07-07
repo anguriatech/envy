@@ -25,5 +25,5 @@ pub use artifact::{
 };
 pub use diceware::suggest_passphrase;
 pub use error::CryptoError;
-pub use keyring::{decode_key_hex, encode_key_hex, get_or_create_master_key, set_master_key};
+pub use keyring::get_or_create_master_key;
 pub use strength::{StrengthLevel, classify, estimate_entropy_bits};
