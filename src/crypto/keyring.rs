@@ -232,7 +232,10 @@ mod tests {
         let key = [0x11u8; 32];
         set_master_key(&key).expect("set_master_key must succeed with a live keyring daemon");
         let fetched = get_or_create_master_key().expect("must succeed with a live keyring daemon");
-        assert_eq!(*fetched, key, "get_or_create must return the key we just set");
+        assert_eq!(
+            *fetched, key,
+            "get_or_create must return the key we just set"
+        );
     }
 
     // T018 — Unit test: validates decode_key length-checking without a live keyring.

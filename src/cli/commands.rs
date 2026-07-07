@@ -128,7 +128,13 @@ pub(super) fn cmd_set(
     value: &str,
 ) -> Result<(), CoreError> {
     crate::core::set_secret(vault, master_key, project_id, env, key, value)?;
-    audit_best_effort(vault, project_id, env, crate::core::AuditAction::Set, Some(key));
+    audit_best_effort(
+        vault,
+        project_id,
+        env,
+        crate::core::AuditAction::Set,
+        Some(key),
+    );
     println!("✓ Set {} in {}.", key, display_env(env));
     Ok(())
 }
@@ -158,7 +164,13 @@ pub(super) fn cmd_get(
 
     match crate::core::get_secret(vault, master_key, project_id, env, key) {
         Ok(value) => {
-            audit_best_effort(vault, project_id, env, crate::core::AuditAction::Get, Some(key));
+            audit_best_effort(
+                vault,
+                project_id,
+                env,
+                crate::core::AuditAction::Get,
+                Some(key),
+            );
             if format == OutputFormat::Table {
                 // Preserve exact existing behaviour (SC-003).
                 println!("{}", *value);
@@ -285,7 +297,13 @@ pub(super) fn cmd_rm(
     key: &str,
 ) -> Result<(), CoreError> {
     crate::core::delete_secret(vault, project_id, env, key)?;
-    audit_best_effort(vault, project_id, env, crate::core::AuditAction::Rm, Some(key));
+    audit_best_effort(
+        vault,
+        project_id,
+        env,
+        crate::core::AuditAction::Rm,
+        Some(key),
+    );
     println!("✓ Deleted {} from {}.", key, display_env(env));
     Ok(())
 }
@@ -1746,18 +1764,24 @@ pub(super) fn cmd_key_export(output: Option<&Path>) -> Result<(), CliError> {
             .write(true)
             .create_new(true)
             .open(&output_path)
-            .map_err(|e| CliError::KeyRecoveryFileExists(format!("{}: {e}", output_path.display())))?;
+            .map_err(|e| {
+                CliError::KeyRecoveryFileExists(format!("{}: {e}", output_path.display()))
+            })?;
         file.write_all(&json_bytes)
             .map_err(|e| CliError::Output(e.to_string()))?;
     }
 
     eprintln!(
         "\n  {}\n\n    Anyone with this file AND the recovery passphrase can decrypt your vault.\n    Losing both this file and your OS keyring means permanent, unrecoverable data loss.\n\n  {}\n",
-        dialoguer::console::style("\u{26a0} STORE THIS FILE OFFLINE, SEPARATELY FROM THIS MACHINE.")
-            .yellow()
-            .bold(),
-        dialoguer::console::style("A password manager or a safe are good homes for it \u{2014} this git repo is not.")
-            .yellow(),
+        dialoguer::console::style(
+            "\u{26a0} STORE THIS FILE OFFLINE, SEPARATELY FROM THIS MACHINE."
+        )
+        .yellow()
+        .bold(),
+        dialoguer::console::style(
+            "A password manager or a safe are good homes for it \u{2014} this git repo is not."
+        )
+        .yellow(),
     );
     println!(
         "\u{2713} Master key recovery file written to {}.",
@@ -1838,10 +1862,7 @@ pub(super) fn cmd_key_import(input: &Path, force: bool) -> Result<(), CliError> 
     }
 
     crate::crypto::set_master_key(&key_bytes).map_err(|e| CliError::VaultOpen(e.to_string()))?;
-    println!(
-        "\u{2713} Master key restored from {}.",
-        input.display()
-    );
+    println!("\u{2713} Master key restored from {}.", input.display());
     Ok(())
 }
 
@@ -1955,10 +1976,7 @@ pub(super) fn cmd_hooks_install(project_root: &Path, force: bool) -> Result<(), 
             // write in a previous run of this exact command.
             let backup_path = hooks_dir.join("pre-commit.envy-backup");
             std::fs::write(&backup_path, &existing).map_err(|e| CliError::Output(e.to_string()))?;
-            println!(
-                "  existing hook backed up to {}",
-                backup_path.display()
-            );
+            println!("  existing hook backed up to {}", backup_path.display());
         }
     }
 
@@ -2341,8 +2359,15 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let (vault, pid) = open_test_vault(&tmp);
 
-        super::cmd_set(&vault, &TEST_MASTER_KEY, &pid, "development", "API_KEY", "v1")
-            .expect("cmd_set must succeed");
+        super::cmd_set(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            "development",
+            "API_KEY",
+            "v1",
+        )
+        .expect("cmd_set must succeed");
 
         let entries = crate::core::list_audit(&vault, &pid, None, 10).expect("list_audit");
         assert_eq!(entries.len(), 1);
@@ -2409,8 +2434,15 @@ mod tests {
     fn cmd_audit_json_output_is_valid_and_masks_nothing_but_values() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let (vault, pid) = open_test_vault(&tmp);
-        super::cmd_set(&vault, &TEST_MASTER_KEY, &pid, "development", "KEY", "super-secret-value")
-            .expect("cmd_set must succeed");
+        super::cmd_set(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            "development",
+            "KEY",
+            "super-secret-value",
+        )
+        .expect("cmd_set must succeed");
 
         let mut buf: Vec<u8> = Vec::new();
         let entries = crate::core::list_audit(&vault, &pid, None, 50).expect("list_audit");
@@ -2430,10 +2462,24 @@ mod tests {
     fn cmd_audit_env_filter_restricts_report() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let (vault, pid) = open_test_vault(&tmp);
-        super::cmd_set(&vault, &TEST_MASTER_KEY, &pid, "development", "DEV_KEY", "v1")
-            .expect("cmd_set dev");
-        super::cmd_set(&vault, &TEST_MASTER_KEY, &pid, "production", "PROD_KEY", "v1")
-            .expect("cmd_set prod");
+        super::cmd_set(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            "development",
+            "DEV_KEY",
+            "v1",
+        )
+        .expect("cmd_set dev");
+        super::cmd_set(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            "production",
+            "PROD_KEY",
+            "v1",
+        )
+        .expect("cmd_set prod");
 
         let entries =
             crate::core::list_audit(&vault, &pid, Some("production"), 50).expect("list_audit");
@@ -2510,7 +2556,8 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         std::fs::create_dir_all(tmp.path().join(".git").join("hooks")).expect("mkdir hooks");
         let hook_path = tmp.path().join(".git").join("hooks").join("pre-commit");
-        std::fs::write(&hook_path, "#!/bin/sh\necho custom user hook\n").expect("write foreign hook");
+        std::fs::write(&hook_path, "#!/bin/sh\necho custom user hook\n")
+            .expect("write foreign hook");
 
         let result = super::cmd_hooks_install(tmp.path(), false);
         assert!(
@@ -2530,7 +2577,8 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         std::fs::create_dir_all(tmp.path().join(".git").join("hooks")).expect("mkdir hooks");
         let hook_path = tmp.path().join(".git").join("hooks").join("pre-commit");
-        std::fs::write(&hook_path, "#!/bin/sh\necho custom user hook\n").expect("write foreign hook");
+        std::fs::write(&hook_path, "#!/bin/sh\necho custom user hook\n")
+            .expect("write foreign hook");
 
         super::cmd_hooks_install(tmp.path(), true).expect("install with --force must succeed");
 
@@ -2626,8 +2674,7 @@ mod tests {
     fn cmd_key_import_rejects_wrong_kind() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("bad-kind.json");
-        std::fs::write(&path, r#"{"kind": "something-else", "version": 1}"#)
-            .expect("write file");
+        std::fs::write(&path, r#"{"kind": "something-else", "version": 1}"#).expect("write file");
 
         let result = super::cmd_key_import(&path, true);
         assert!(
@@ -2663,8 +2710,7 @@ mod tests {
             zeroize::Zeroizing::new(crate::crypto::encode_key_hex(&TEST_MASTER_KEY)),
         );
         let payload = crate::crypto::ArtifactPayload { secrets };
-        let envelope =
-            crate::crypto::seal_envelope("correct-passphrase", &payload).expect("seal");
+        let envelope = crate::crypto::seal_envelope("correct-passphrase", &payload).expect("seal");
         let doc = serde_json::json!({
             "kind": "envy-master-key-recovery",
             "version": 1,
@@ -4297,7 +4343,8 @@ mod tests {
             .expect("set_secret must succeed");
 
         let nonexistent_artifact = tmp.path().join("no-such-file.enc");
-        let result = super::cmd_status(&vault, &pid, &nonexistent_artifact, OutputFormat::Table, 90);
+        let result =
+            super::cmd_status(&vault, &pid, &nonexistent_artifact, OutputFormat::Table, 90);
         assert!(
             result.is_ok(),
             "cmd_status must return Ok when artifact not found: {:?}",

@@ -428,15 +428,13 @@ pub fn run() -> i32 {
                     cli_exit_code(&e)
                 }
             },
-            KeyAction::Import { input, force } => {
-                match commands::cmd_key_import(&input, force) {
-                    Ok(()) => 0,
-                    Err(e) => {
-                        eprintln!("{}", format_cli_error(&e));
-                        cli_exit_code(&e)
-                    }
+            KeyAction::Import { input, force } => match commands::cmd_key_import(&input, force) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("{}", format_cli_error(&e));
+                    cli_exit_code(&e)
                 }
-            }
+            },
         };
     }
 

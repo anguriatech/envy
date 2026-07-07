@@ -141,8 +141,14 @@ mod tests {
             .create_environment(&pid, "development")
             .expect("create env");
 
-        record(&vault, &pid, "development", AuditAction::Set, Some("API_KEY"))
-            .expect("record must succeed");
+        record(
+            &vault,
+            &pid,
+            "development",
+            AuditAction::Set,
+            Some("API_KEY"),
+        )
+        .expect("record must succeed");
 
         let entries = list_audit(&vault, &pid, None, 10).expect("list must succeed");
         assert_eq!(entries.len(), 1);
@@ -172,9 +178,12 @@ mod tests {
             .expect("create env");
         record(&vault, &pid, "production", AuditAction::Run, None).expect("record must succeed");
 
-        let entries =
-            list_audit(&vault, &pid, Some("PRODUCTION"), 10).expect("list must succeed");
-        assert_eq!(entries.len(), 1, "filter must normalize case like env names do");
+        let entries = list_audit(&vault, &pid, Some("PRODUCTION"), 10).expect("list must succeed");
+        assert_eq!(
+            entries.len(),
+            1,
+            "filter must normalize case like env names do"
+        );
     }
 
     #[test]
