@@ -129,7 +129,10 @@ mod tests {
     fn long_mixed_charset_is_strong() {
         let bits = estimate_entropy_bits("Tr0ub4dor&3-XyZ!qw");
         assert!(
-            matches!(classify(bits), StrengthLevel::Strong | StrengthLevel::VeryStrong),
+            matches!(
+                classify(bits),
+                StrengthLevel::Strong | StrengthLevel::VeryStrong
+            ),
             "bits = {bits}"
         );
     }

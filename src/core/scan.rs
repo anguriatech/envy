@@ -220,41 +220,54 @@ mod tests {
         )
         .expect("write leaked file");
 
-        let matches = scan_for_leaks(
-            &vault,
-            &TEST_KEY,
-            &pid,
-            None,
-            scan_root.path(),
-            false,
-        )
-        .expect("scan must succeed");
+        let matches = scan_for_leaks(&vault, &TEST_KEY, &pid, None, scan_root.path(), false)
+            .expect("scan must succeed");
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].key, "API_KEY");
         assert_eq!(matches[0].line, 1);
-        assert!(matches[0].value.is_none(), "value must be masked by default");
+        assert!(
+            matches[0].value.is_none(),
+            "value must be masked by default"
+        );
     }
 
     #[test]
     fn reveal_true_populates_value() {
         let (_tmp, vault, pid) = open_test_vault();
-        crate::core::set_secret(&vault, &TEST_KEY, &pid, "development", "KEY", "leaked-value-1")
-            .expect("set_secret");
+        crate::core::set_secret(
+            &vault,
+            &TEST_KEY,
+            &pid,
+            "development",
+            "KEY",
+            "leaked-value-1",
+        )
+        .expect("set_secret");
 
         let scan_root = tempfile::tempdir().expect("scan root");
         std::fs::write(scan_root.path().join("f.txt"), "leaked-value-1\n").expect("write");
 
         let matches = scan_for_leaks(&vault, &TEST_KEY, &pid, None, scan_root.path(), true)
             .expect("scan must succeed");
-        assert_eq!(matches[0].value.as_deref().map(|v| v.as_str()), Some("leaked-value-1"));
+        assert_eq!(
+            matches[0].value.as_deref().map(|v| v.as_str()),
+            Some("leaked-value-1")
+        );
     }
 
     #[test]
     fn clean_repo_returns_no_matches() {
         let (_tmp, vault, pid) = open_test_vault();
-        crate::core::set_secret(&vault, &TEST_KEY, &pid, "development", "KEY", "totally-secret")
-            .expect("set_secret");
+        crate::core::set_secret(
+            &vault,
+            &TEST_KEY,
+            &pid,
+            "development",
+            "KEY",
+            "totally-secret",
+        )
+        .expect("set_secret");
 
         let scan_root = tempfile::tempdir().expect("scan root");
         std::fs::write(scan_root.path().join("f.txt"), "nothing sensitive here\n").expect("write");
@@ -284,8 +297,15 @@ mod tests {
     #[test]
     fn respects_gitignore() {
         let (_tmp, vault, pid) = open_test_vault();
-        crate::core::set_secret(&vault, &TEST_KEY, &pid, "development", "KEY", "ignored-secret")
-            .expect("set_secret");
+        crate::core::set_secret(
+            &vault,
+            &TEST_KEY,
+            &pid,
+            "development",
+            "KEY",
+            "ignored-secret",
+        )
+        .expect("set_secret");
 
         let scan_root = tempfile::tempdir().expect("scan root");
         std::fs::write(scan_root.path().join(".gitignore"), "ignored-dir/\n").expect("write");
@@ -298,17 +318,21 @@ mod tests {
 
         let matches = scan_for_leaks(&vault, &TEST_KEY, &pid, None, scan_root.path(), false)
             .expect("scan must succeed");
-        assert!(
-            matches.is_empty(),
-            "gitignored paths must not be scanned"
-        );
+        assert!(matches.is_empty(), "gitignored paths must not be scanned");
     }
 
     #[test]
     fn scans_dotfiles_like_env() {
         let (_tmp, vault, pid) = open_test_vault();
-        crate::core::set_secret(&vault, &TEST_KEY, &pid, "development", "KEY", "dotfile-secret")
-            .expect("set_secret");
+        crate::core::set_secret(
+            &vault,
+            &TEST_KEY,
+            &pid,
+            "development",
+            "KEY",
+            "dotfile-secret",
+        )
+        .expect("set_secret");
 
         let scan_root = tempfile::tempdir().expect("scan root");
         std::fs::write(scan_root.path().join(".env"), "KEY=dotfile-secret\n").expect("write");
@@ -325,10 +349,24 @@ mod tests {
     #[test]
     fn env_filter_restricts_which_secrets_are_searched() {
         let (_tmp, vault, pid) = open_test_vault();
-        crate::core::set_secret(&vault, &TEST_KEY, &pid, "development", "DEV", "dev-secret-value")
-            .expect("set dev");
-        crate::core::set_secret(&vault, &TEST_KEY, &pid, "production", "PROD", "prod-secret-value")
-            .expect("set prod");
+        crate::core::set_secret(
+            &vault,
+            &TEST_KEY,
+            &pid,
+            "development",
+            "DEV",
+            "dev-secret-value",
+        )
+        .expect("set dev");
+        crate::core::set_secret(
+            &vault,
+            &TEST_KEY,
+            &pid,
+            "production",
+            "PROD",
+            "prod-secret-value",
+        )
+        .expect("set prod");
 
         let scan_root = tempfile::tempdir().expect("scan root");
         std::fs::write(

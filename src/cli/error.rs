@@ -80,12 +80,16 @@ pub enum CliError {
 
     /// `envy hooks install` could not find a `.git` directory above the
     /// current project.
-    #[error("no .git directory found above the current project \u{2014} `envy hooks install` requires a git repository")]
+    #[error(
+        "no .git directory found above the current project \u{2014} `envy hooks install` requires a git repository"
+    )]
     GitRepoNotFound,
 
     /// `envy hooks install` found an existing hook file that wasn't
     /// installed by envy, and `--force` was not given.
-    #[error("{0} already exists and was not installed by envy \u{2014} re-run with --force to back it up and replace it")]
+    #[error(
+        "{0} already exists and was not installed by envy \u{2014} re-run with --force to back it up and replace it"
+    )]
     HookConflict(String),
 }
 
