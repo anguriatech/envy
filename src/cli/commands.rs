@@ -1752,11 +1752,10 @@ pub(super) fn cmd_key_export(output: Option<&Path>) -> Result<(), CliError> {
     }
 
     eprintln!(
-        "\n  {}\n\n    {}\n\n  {}\n",
+        "\n  {}\n\n    Anyone with this file AND the recovery passphrase can decrypt your vault.\n    Losing both this file and your OS keyring means permanent, unrecoverable data loss.\n\n  {}\n",
         dialoguer::console::style("\u{26a0} STORE THIS FILE OFFLINE, SEPARATELY FROM THIS MACHINE.")
             .yellow()
             .bold(),
-        "Anyone with this file AND the recovery passphrase can decrypt your vault.\nLosing both this file and your OS keyring means permanent, unrecoverable data loss.",
         dialoguer::console::style("A password manager or a safe are good homes for it \u{2014} this git repo is not.")
             .yellow(),
     );
