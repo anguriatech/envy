@@ -26,6 +26,11 @@ use super::{
 /// deriving the human-readable sync state (`SyncStatus`) from these fields.
 #[derive(Debug, Clone)]
 pub struct EnvironmentStatus {
+    /// Globally unique environment identifier (UUID v4, hyphenated).
+    /// Lets the Core layer look up per-secret ages for the rotation reminder
+    /// without a second aggregate query.
+    pub id: EnvId,
+
     /// Lowercase environment label (e.g., `development`, `production`).
     pub name: String,
 
@@ -85,6 +90,7 @@ impl Vault {
             .conn
             .prepare(
                 "SELECT
+                     e.id,
                      e.name,
                      COUNT(s.id)       AS secret_count,
                      MAX(s.updated_at) AS last_modified_at,
@@ -103,10 +109,11 @@ impl Vault {
         let rows = stmt
             .query_map(params![project_id.as_str()], |row| {
                 Ok(EnvironmentStatus {
-                    name: row.get(0)?,
-                    secret_count: row.get(1)?,
-                    last_modified_at: row.get(2)?,
-                    sealed_at: row.get(3)?,
+                    id: EnvId(row.get(0)?),
+                    name: row.get(1)?,
+                    secret_count: row.get(2)?,
+                    last_modified_at: row.get(3)?,
+                    sealed_at: row.get(4)?,
                 })
             })
             .map_err(map_rusqlite_error)?;

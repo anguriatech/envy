@@ -513,7 +513,13 @@ pub fn run() -> i32 {
 
         Commands::Status => {
             let artifact = artifact_path(&manifest_path);
-            match commands::cmd_status(&vault, &project_id, &artifact, cli.format) {
+            match commands::cmd_status(
+                &vault,
+                &project_id,
+                &artifact,
+                cli.format,
+                manifest.rotation_reminder_days,
+            ) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{}", format_cli_error(&e));
