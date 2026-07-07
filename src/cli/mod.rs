@@ -226,6 +226,24 @@ pub enum Commands {
         env: Option<String>,
     },
 
+    /// Scan the project's working tree for plaintext copies of vault secrets.
+    ///
+    /// Compares every EXACT secret value already stored in the vault against
+    /// the contents of tracked (and gitignore-respecting) files — this is
+    /// not a generic pattern-based secret scanner. Values are masked by
+    /// default; `--reveal` shows the matched value with a stderr warning.
+    /// Exit code 0 = clean, 1 = leak(s) found, 2+ = error — safe to gate a
+    /// pre-commit hook on.
+    Scan {
+        /// Restrict the scan to secrets from a single environment (default: all).
+        #[arg(short = 'e', long = "env", value_name = "ENV")]
+        env: Option<String>,
+
+        /// Show the matched plaintext value in the output.
+        #[arg(long)]
+        reveal: bool,
+    },
+
     /// Show the local audit trail of secret-touching actions.
     ///
     /// Records `set`, `get`, `rm`, and `run` actions (key name and timestamp
@@ -550,6 +568,30 @@ pub fn run() -> i32 {
             match commands::cmd_rotate(&vault, &master_key, &project_id, &artifact, env.as_deref())
             {
                 Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("{}", format_cli_error(&e));
+                    cli_exit_code(&e)
+                }
+            }
+        }
+
+        Commands::Scan { env, reveal } => {
+            match commands::cmd_scan(
+                &vault,
+                &master_key,
+                &project_id,
+                env.as_deref(),
+                &manifest_path,
+                cli.format,
+                reveal,
+            ) {
+                Ok(has_leaks) => {
+                    if has_leaks {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 Err(e) => {
                     eprintln!("{}", format_cli_error(&e));
                     cli_exit_code(&e)
