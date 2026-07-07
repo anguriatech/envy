@@ -7,6 +7,7 @@
 //! - All public functions return `Result<T, DbError>`.
 //! - `.unwrap()` and `.expect()` are prohibited in this module.
 
+mod audit;
 mod environments;
 mod error;
 mod projects;
@@ -14,6 +15,7 @@ mod schema;
 mod secrets;
 mod sync_markers;
 
+pub use audit::AuditLogRecord;
 pub use environments::Environment;
 pub use error::DbError;
 use error::map_rusqlite_error;

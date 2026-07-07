@@ -36,7 +36,10 @@ fn validate_key(key: &str) -> Result<(), CoreError> {
 
 /// Normalises an environment name: defaults to [`DEFAULT_ENV`] when empty,
 /// then lowercases (defense-in-depth against callers not normalising first).
-fn normalize_env(env_name: &str) -> String {
+///
+/// `pub(super)` so sibling Core modules (e.g. `core::audit`) apply the exact
+/// same normalisation instead of duplicating it.
+pub(super) fn normalize_env(env_name: &str) -> String {
     if env_name.is_empty() {
         DEFAULT_ENV.to_owned()
     } else {

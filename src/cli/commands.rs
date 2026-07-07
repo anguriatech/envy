@@ -32,6 +32,24 @@ fn display_env(env: &str) -> &str {
     }
 }
 
+/// Records one audit entry, best-effort.
+///
+/// The primary operation (e.g. `envy set`) has already succeeded by the time
+/// this is called. A broken audit trail (corrupted vault row, disk full)
+/// must not make the primary command fail retroactively — so a failure here
+/// is only surfaced as a stderr warning, never as an error return.
+fn audit_best_effort(
+    vault: &Vault,
+    project_id: &ProjectId,
+    env: &str,
+    action: crate::core::AuditAction,
+    key: Option<&str>,
+) {
+    if let Err(e) = crate::core::record_audit(vault, project_id, env, action, key) {
+        eprintln!("warning: could not write audit log entry: {e}");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // T016 — cmd_init
 // ---------------------------------------------------------------------------
@@ -110,6 +128,7 @@ pub(super) fn cmd_set(
     value: &str,
 ) -> Result<(), CoreError> {
     crate::core::set_secret(vault, master_key, project_id, env, key, value)?;
+    audit_best_effort(vault, project_id, env, crate::core::AuditAction::Set, Some(key));
     println!("✓ Set {} in {}.", key, display_env(env));
     Ok(())
 }
@@ -139,6 +158,7 @@ pub(super) fn cmd_get(
 
     match crate::core::get_secret(vault, master_key, project_id, env, key) {
         Ok(value) => {
+            audit_best_effort(vault, project_id, env, crate::core::AuditAction::Get, Some(key));
             if format == OutputFormat::Table {
                 // Preserve exact existing behaviour (SC-003).
                 println!("{}", *value);
@@ -265,6 +285,7 @@ pub(super) fn cmd_rm(
     key: &str,
 ) -> Result<(), CoreError> {
     crate::core::delete_secret(vault, project_id, env, key)?;
+    audit_best_effort(vault, project_id, env, crate::core::AuditAction::Rm, Some(key));
     println!("✓ Deleted {} from {}.", key, display_env(env));
     Ok(())
 }
@@ -297,6 +318,12 @@ pub(super) fn cmd_run(
             return crate::cli::error::core_exit_code(&e);
         }
     };
+    // Only audit when the environment actually exists and has secrets — a
+    // fresh project with no environment yet must not print a spurious
+    // "could not write audit log" warning on every `envy run`.
+    if !secrets.is_empty() {
+        audit_best_effort(vault, project_id, env, crate::core::AuditAction::Run, None);
+    }
 
     // `command` is guaranteed non-empty by `#[arg(last = true, required = true)]`.
     let (bin, args) = command
@@ -1461,6 +1488,70 @@ pub(super) fn cmd_status(
 }
 
 // ---------------------------------------------------------------------------
+// cmd_audit — local audit trail report
+// ---------------------------------------------------------------------------
+
+/// Displays the local audit trail of secret-touching actions (`set`/`get`/`rm`/`run`).
+///
+/// Read-only and never decrypts anything — the audit table only ever stores
+/// action names, key names, and timestamps (see `db::schema` SCHEMA_V3).
+pub(super) fn cmd_audit(
+    vault: &Vault,
+    project_id: &ProjectId,
+    env_filter: Option<&str>,
+    limit: i64,
+    format: OutputFormat,
+) -> Result<(), CliError> {
+    let entries =
+        crate::core::list_audit(vault, project_id, env_filter, limit).map_err(CliError::Core)?;
+
+    if format == OutputFormat::Json {
+        return write_audit_json(&entries, &mut std::io::stdout());
+    }
+
+    if entries.is_empty() {
+        println!("No audit history yet. Actions are recorded on set/get/rm/run.");
+        return Ok(());
+    }
+
+    let mut table = comfy_table::Table::new();
+    table.set_header(vec!["Time", "Environment", "Action", "Key"]);
+    for e in &entries {
+        table.add_row(vec![
+            comfy_table::Cell::new(humanize_timestamp(e.created_at)),
+            comfy_table::Cell::new(&e.environment),
+            comfy_table::Cell::new(&e.action),
+            comfy_table::Cell::new(e.key.as_deref().unwrap_or("-")),
+        ]);
+    }
+    println!("{table}");
+    Ok(())
+}
+
+/// Serializes the audit report as a JSON array to `writer`.
+fn write_audit_json(
+    entries: &[crate::core::AuditEntry],
+    writer: &mut impl std::io::Write,
+) -> Result<(), CliError> {
+    let items: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "environment": e.environment,
+                "action": e.action,
+                "key": e.key,
+                "created_at": epoch_to_iso8601(e.created_at),
+            })
+        })
+        .collect();
+
+    serde_json::to_writer_pretty(&mut *writer, &items)
+        .map_err(|e| CliError::Output(e.to_string()))?;
+    writeln!(writer).map_err(|e| CliError::Output(e.to_string()))?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // T014 — Color helpers for diff output
 // ---------------------------------------------------------------------------
 
@@ -1800,6 +1891,115 @@ mod tests {
         assert_eq!(valid.len(), 1, "must produce exactly 1 valid pair");
         assert_eq!(malformed, 1, "must detect exactly 1 malformed line");
         assert_eq!(valid[0], ("GOOD_KEY", "good_value"));
+    }
+
+    // -----------------------------------------------------------------------
+    // cmd_set / cmd_get / cmd_rm / cmd_audit — audit trail wiring
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cmd_set_records_audit_entry() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (vault, pid) = open_test_vault(&tmp);
+
+        super::cmd_set(&vault, &TEST_MASTER_KEY, &pid, "development", "API_KEY", "v1")
+            .expect("cmd_set must succeed");
+
+        let entries = crate::core::list_audit(&vault, &pid, None, 10).expect("list_audit");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].action, "set");
+        assert_eq!(entries[0].key.as_deref(), Some("API_KEY"));
+        assert_eq!(entries[0].environment, "development");
+    }
+
+    #[test]
+    fn cmd_get_records_audit_entry_only_on_success() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (vault, pid) = open_test_vault(&tmp);
+        super::cmd_set(&vault, &TEST_MASTER_KEY, &pid, "development", "KEY", "v1")
+            .expect("cmd_set must succeed");
+
+        // Failed get (missing key) must not add an audit entry.
+        let _ = super::cmd_get(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            "development",
+            "MISSING",
+            OutputFormat::Table,
+        );
+        // Successful get must add exactly one 'get' entry.
+        super::cmd_get(
+            &vault,
+            &TEST_MASTER_KEY,
+            &pid,
+            "development",
+            "KEY",
+            OutputFormat::Table,
+        )
+        .expect("cmd_get must succeed");
+
+        let entries = crate::core::list_audit(&vault, &pid, None, 10).expect("list_audit");
+        let get_entries: Vec<_> = entries.iter().filter(|e| e.action == "get").collect();
+        assert_eq!(
+            get_entries.len(),
+            1,
+            "only the successful get must be recorded"
+        );
+        assert_eq!(get_entries[0].key.as_deref(), Some("KEY"));
+    }
+
+    #[test]
+    fn cmd_rm_records_audit_entry() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (vault, pid) = open_test_vault(&tmp);
+        super::cmd_set(&vault, &TEST_MASTER_KEY, &pid, "development", "KEY", "v1")
+            .expect("cmd_set must succeed");
+
+        super::cmd_rm(&vault, &pid, "development", "KEY").expect("cmd_rm must succeed");
+
+        let entries = crate::core::list_audit(&vault, &pid, None, 10).expect("list_audit");
+        let rm_entry = entries
+            .iter()
+            .find(|e| e.action == "rm")
+            .expect("an 'rm' entry must exist");
+        assert_eq!(rm_entry.key.as_deref(), Some("KEY"));
+    }
+
+    #[test]
+    fn cmd_audit_json_output_is_valid_and_masks_nothing_but_values() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (vault, pid) = open_test_vault(&tmp);
+        super::cmd_set(&vault, &TEST_MASTER_KEY, &pid, "development", "KEY", "super-secret-value")
+            .expect("cmd_set must succeed");
+
+        let mut buf: Vec<u8> = Vec::new();
+        let entries = crate::core::list_audit(&vault, &pid, None, 50).expect("list_audit");
+        super::write_audit_json(&entries, &mut buf).expect("write_audit_json must succeed");
+
+        let json_str = String::from_utf8(buf).expect("valid UTF-8");
+        assert!(
+            !json_str.contains("super-secret-value"),
+            "audit JSON must never contain the secret value"
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).expect("valid JSON");
+        assert_eq!(parsed[0]["key"], "KEY");
+        assert_eq!(parsed[0]["action"], "set");
+    }
+
+    #[test]
+    fn cmd_audit_env_filter_restricts_report() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (vault, pid) = open_test_vault(&tmp);
+        super::cmd_set(&vault, &TEST_MASTER_KEY, &pid, "development", "DEV_KEY", "v1")
+            .expect("cmd_set dev");
+        super::cmd_set(&vault, &TEST_MASTER_KEY, &pid, "production", "PROD_KEY", "v1")
+            .expect("cmd_set prod");
+
+        let entries =
+            crate::core::list_audit(&vault, &pid, Some("production"), 50).expect("list_audit");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key.as_deref(), Some("PROD_KEY"));
     }
 
     // -----------------------------------------------------------------------

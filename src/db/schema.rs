@@ -6,6 +6,7 @@
 //! Current versions:
 //!   0 → 1: Initial schema (projects, environments, secrets).
 //!   1 → 2: Add sync_markers table (sealed_at per environment).
+//!   2 → 3: Add audit_logs table (local, append-only action history).
 
 use super::error::{DbError, is_encryption_error};
 
@@ -104,6 +105,46 @@ CREATE TABLE IF NOT EXISTS sync_markers (
 );
 ";
 
+/// DDL for schema version 3.
+///
+/// Adds the `audit_logs` table: a local, append-only record of secret-touching
+/// actions (`set`, `get`, `rm`, `run`) for `envy audit`. Rows are never updated,
+/// only inserted — this is a forensic trail, not a mutable projection.
+///
+/// # Security contract
+/// `value_encrypted` and secret values are NEVER written to this table — only
+/// the action name, the key name (nullable for whole-environment actions),
+/// and a timestamp. A leaked or corrupted vault must not turn this table into
+/// a second copy of the secrets themselves.
+const SCHEMA_V3: &str = "
+CREATE TABLE IF NOT EXISTS audit_logs (
+    -- Globally unique identifier (UUID v4, hyphenated).
+    id              TEXT    NOT NULL PRIMARY KEY
+                            CHECK(length(id) = 36),
+
+    -- Environment the action was performed against. CASCADE ensures audit
+    -- rows are cleaned up when the environment itself is deleted (they can
+    -- no longer be attributed to anything the user can inspect).
+    environment_id  TEXT    NOT NULL
+                            REFERENCES environments(id) ON DELETE CASCADE,
+
+    -- One of: set, get, rm, run. Enforced at the DB level as a second line
+    -- of defense after the Core layer's AuditAction enum.
+    action          TEXT    NOT NULL
+                            CHECK(action IN ('set', 'get', 'rm', 'run')),
+
+    -- Secret key name touched by the action. NULL for whole-environment
+    -- actions (e.g. 'run', which touches every secret in the environment).
+    key             TEXT,
+
+    -- Unix epoch (UTC, seconds). Set once on INSERT; rows are never updated.
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_environment_created
+    ON audit_logs(environment_id, created_at DESC);
+";
+
 /// Checks the current `user_version` and applies any pending migrations.
 ///
 /// - If `user_version` is 0 (new vault): creates all V1 tables and sets version to 1.
@@ -143,6 +184,19 @@ pub fn run_migrations(conn: &rusqlite::Connection) -> Result<(), DbError> {
             .map_err(|e| DbError::MigrationError(e.to_string()))?;
 
         conn.pragma_update(None, "user_version", 2i64)
+            .map_err(|e| DbError::MigrationError(e.to_string()))?;
+    }
+
+    // Re-read again so a fresh vault (0 → 1 → 2 → 3) also gets V3 in one call.
+    let version: i64 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(|e| DbError::MigrationError(e.to_string()))?;
+
+    if version == 2 {
+        conn.execute_batch(SCHEMA_V3)
+            .map_err(|e| DbError::MigrationError(e.to_string()))?;
+
+        conn.pragma_update(None, "user_version", 3i64)
             .map_err(|e| DbError::MigrationError(e.to_string()))?;
     }
 
