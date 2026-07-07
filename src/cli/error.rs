@@ -63,6 +63,20 @@ pub enum CliError {
     /// Output formatting or write failure.
     #[error("output error: {0}")]
     Output(String),
+
+    /// `envy key export` was asked to write to a file that already exists.
+    #[error("recovery file already exists at \"{0}\" \u{2014} refusing to overwrite it")]
+    KeyRecoveryFileExists(String),
+
+    /// `envy key import`'s recovery file is missing, malformed, or was
+    /// sealed with a different schema than this build understands.
+    #[error("recovery file unreadable: {0}")]
+    KeyRecoveryFileInvalid(String),
+
+    /// The user declined the confirmation prompt for a risky action
+    /// (currently only `envy key import` when a local vault already exists).
+    #[error("aborted: {0}")]
+    Aborted(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +147,9 @@ pub fn cli_exit_code(e: &CliError) -> i32 {
         CliError::ArtifactUnreadable(_) => 5,
         CliError::Core(e) => core_exit_code(e),
         CliError::Output(_) => 1,
+        CliError::KeyRecoveryFileExists(_) => 3,
+        CliError::KeyRecoveryFileInvalid(_) => 5,
+        CliError::Aborted(_) => 3,
     }
 }
 
