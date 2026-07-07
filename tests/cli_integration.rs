@@ -11,7 +11,8 @@
 //!   cargo test -- --ignored
 //!   cargo test --test cli_integration -- --ignored
 
-use std::process::{Command, Output};
+use std::io::Write;
+use std::process::{Command, Output, Stdio};
 
 // ---------------------------------------------------------------------------
 // Shared helper
@@ -121,6 +122,60 @@ fn cli_set_and_get_round_trip() {
         stdout.as_ref(),
         "secret123\n",
         "stdout must be exactly 'secret123\\n', got: {stdout:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Regression — `set --stdin` must not bake in a trailing newline
+// ---------------------------------------------------------------------------
+
+/// `echo "secret" | envy set --stdin KEY` (the documented usage) appends a
+/// trailing `\n` that is not part of the secret. Verifies the stored value
+/// matches the exact `set`/`get` round-trip contract used by
+/// `cli_set_and_get_round_trip`, rather than picking up a stray newline that
+/// would also silently defeat `envy scan`'s line-based leak matching.
+#[test]
+#[ignore = "requires a live OS keyring daemon (Secret Service / Keychain)"]
+fn cli_set_stdin_trims_trailing_newline() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    setup_project(tmp.path());
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["set", "--stdin", "API_KEY"])
+        .current_dir(tmp.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn envy set --stdin");
+    child
+        .stdin
+        .take()
+        .expect("child stdin must be piped")
+        .write_all(b"secret123\n")
+        .expect("write to child stdin");
+    let set_out = child
+        .wait_with_output()
+        .expect("failed to wait on envy set --stdin");
+    assert!(
+        set_out.status.success(),
+        "envy set --stdin must exit 0, stderr: {}",
+        String::from_utf8_lossy(&set_out.stderr)
+    );
+
+    let get_out = envy(&["get", "API_KEY"], tmp.path());
+    assert!(
+        get_out.status.success(),
+        "envy get must exit 0, stderr: {}",
+        String::from_utf8_lossy(&get_out.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&get_out.stdout);
+    assert_eq!(
+        stdout.as_ref(),
+        "secret123\n",
+        "stdin-piped 'secret123\\n' must round-trip to exactly 'secret123' \
+         (plus get's own trailing newline), got: {stdout:?}"
     );
 }
 
