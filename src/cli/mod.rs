@@ -452,6 +452,19 @@ pub fn run() -> i32 {
                     eprintln!("error: cannot read value from stdin: {e}");
                     return 4;
                 }
+                // `echo "secret" | envy set --stdin KEY` (the documented usage)
+                // appends a trailing newline that isn't part of the secret.
+                // Strip exactly one, so the stored value matches what the
+                // user typed rather than corrupting it with a stray `\n`
+                // (which also silently defeated `envy scan`'s line-based
+                // matching, since a needle containing `\n` can never match
+                // a single line).
+                if value.ends_with('\n') {
+                    value.pop();
+                    if value.ends_with('\r') {
+                        value.pop();
+                    }
+                }
                 match commands::cmd_set(&vault, &master_key, &project_id, env, &assignment, &value)
                 {
                     Ok(()) => 0,
