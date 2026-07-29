@@ -488,6 +488,28 @@ git commit -m "..."
 
 It also prints a non-blocking warning when `envy status` shows unsealed drift. Nothing leaves the machine. A pre-existing hook envy didn't install is never overwritten without `--force`, and even then the previous file is backed up first.
 
+### Rotation reminder
+
+`envy status` flags secrets that haven't been touched in over `rotation_reminder_days` days (default 90, configurable in `envy.toml`):
+
+```toml
+# envy.toml
+rotation_reminder_days = 120
+```
+
+When any secret exceeds the threshold, a `⚠ Rotation reminder` section lists the affected key names — values are never shown. Set `rotation_reminder_days = 0` to disable the reminder entirely. This is read-only and never decrypts anything; it simply compares `updated_at` timestamps against the current wall-clock time.
+
+### Passphrase strength hint
+
+When you type a passphrase by hand during interactive `envy encrypt` or `envy rotate` prompts, a non-blocking strength estimate is printed:
+
+```
+  ℹ passphrase strength: weak (~36 bits estimated)
+    hint: press Enter on an empty prompt next time to accept envy's suggested Diceware phrase.
+```
+
+This is purely informational — a low score never blocks or rejects a passphrase. Security rests on Argon2id + AES-256-GCM, not on this heuristic. The hint nudges you toward envy's built-in Diceware passphrase generator (press Enter on an empty prompt).
+
 </details>
 
 ---

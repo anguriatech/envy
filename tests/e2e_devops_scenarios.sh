@@ -11,6 +11,9 @@
 #   6. Multi-Env Headless Encryption with Smart Merge (FR-001, FR-005, SC-002)
 #   8. Sync Status Command (FR-001–FR-008, US1–US4)
 #   9. Pre-Encrypt Secret Diff (011-envy-diff)
+#  12. Vault-leak Scanner (envy scan)
+#  13. Audit Log (envy audit)
+#  14. Pre-commit Hook Installer (envy hooks install)
 #
 # Requirements:
 #   - `envy` binary built or passed via ENVY_BIN env var
@@ -820,6 +823,162 @@ assert_eq "encrypt with matching passphrase exits 0" "0" "$S11_MATCH_EXIT"
 # The artifact MUST have changed (fresh salt + nonce).
 S11_SHA_MATCH=$(sha256sum "$S11_DIR/envy.enc" | awk '{print $1}')
 assert_ne "envy.enc changes after re-seal with matching passphrase" "$S11_SHA_BEFORE" "$S11_SHA_MATCH"
+
+# =============================================================================
+# SCENARIO 12 — Vault-leak scanner (`envy scan`)
+#
+# Verifies:
+#   - Scan finds exact plaintext copies of secrets already in the vault
+#   - Exit code 0 (clean) vs 1 (leak found)
+#   - JSON output is parseable by jq
+#   - .gitignore is respected (node_modules skipped)
+# =============================================================================
+
+section "Scenario 12 — Vault-leak Scanner"
+
+echo -e "${YELLOW}  [S12] Setting up project with a secret...${RESET}"
+init_project "$WORKSPACE/s12-scan"
+S12_DIR="$PROJECT_DIR"
+
+(cd "$S12_DIR" && "$ENVY" set "DB_URL=postgres://admin:supersecret@host/db")
+
+# ── US1: clean repo → exit 0 ──────────────────────────────────────────────────
+echo -e "${YELLOW}  [S12] US1: clean repo → exit 0...${RESET}"
+S12_CLEAN_EXIT=0
+(cd "$S12_DIR" && "$ENVY" scan 2>&1) || S12_CLEAN_EXIT=$?
+assert_eq "scan on clean repo exits 0" "0" "$S12_CLEAN_EXIT"
+
+# ── US2: leak in a file → exit 1 ────────────────────────────────────────────────
+echo -e "${YELLOW}  [S12] US2: file with hardcoded secret → exit 1...${RESET}"
+echo 'const url = "postgres://admin:supersecret@host/db";' > "$S12_DIR/config.ts"
+
+S12_LEAK_EXIT=0
+S12_LEAK_OUT=$(cd "$S12_DIR" && "$ENVY" scan 2>&1) || S12_LEAK_EXIT=$?
+assert_eq "scan with leak exits 1" "1" "$S12_LEAK_EXIT"
+assert_contains "scan output mentions config.ts" "config.ts" "$S12_LEAK_OUT"
+assert_contains "scan output mentions DB_URL" "DB_URL" "$S12_LEAK_OUT"
+
+# ── US3: JSON output is valid ───────────────────────────────────────────────────
+echo -e "${YELLOW}  [S12] US3: --format json output valid...${RESET}"
+S12_JSON_EXIT=0
+S12_JSON=$(cd "$S12_DIR" && "$ENVY" scan --format json 2>/dev/null) || S12_JSON_EXIT=$?
+assert_eq "scan --format json exits 1" "1" "$S12_JSON_EXIT"
+
+S12_JSON_LEN=$(echo "$S12_JSON" | jq 'length' 2>/dev/null || echo "INVALID")
+assert_eq "JSON has 1 finding" "1" "$S12_JSON_LEN"
+S12_JSON_KEY=$(echo "$S12_JSON" | jq -r '.[0].key' 2>/dev/null || echo "INVALID")
+assert_eq "JSON finding key is DB_URL" "DB_URL" "$S12_JSON_KEY"
+
+# ── US4: .gitignore respected ──────────────────────────────────────────────────
+echo -e "${YELLOW}  [S12] US4: .gitignore excludes node_modules...${RESET}"
+mkdir -p "$S12_DIR/node_modules"
+echo 'postgres://admin:supersecret@host/db' > "$S12_DIR/node_modules/leak.js"
+echo "node_modules/" > "$S12_DIR/.gitignore"
+
+S12_GIT_EXIT=0
+S12_GIT_OUT=$(cd "$S12_DIR" && "$ENVY" scan 2>&1) || S12_GIT_EXIT=$?
+assert_eq "scan still exits 1 (config.ts leak)" "1" "$S12_GIT_EXIT"
+assert_not_contains "gitignored leak not in output" "node_modules" "$S12_GIT_OUT"
+
+# Clean up the leak to not affect other scenarios.
+rm -f "$S12_DIR/config.ts"
+
+# =============================================================================
+# SCENARIO 13 — Audit log (`envy audit`)
+#
+# Verifies:
+#   - set/get/rm/run are recorded in the audit trail
+#   - Values are NEVER shown, only key names and times
+#   - JSON output is valid
+# =============================================================================
+
+section "Scenario 13 — Audit Log"
+
+echo -e "${YELLOW}  [S13] Setting up project and performing actions...${RESET}"
+init_project "$WORKSPACE/s13-audit"
+S13_DIR="$PROJECT_DIR"
+
+(cd "$S13_DIR" && "$ENVY" set "API_KEY=sk_test_value" -e development)
+(cd "$S13_DIR" && "$ENVY" get API_KEY -e development 2>/dev/null) || true
+(cd "$S13_DIR" && "$ENVY" set "TEMP_KEY=tempvalue" -e development)
+(cd "$S13_DIR" && "$ENVY" rm TEMP_KEY -e development)
+
+# ── US1: audit table shows actions ──────────────────────────────────────────────
+echo -e "${YELLOW}  [S13] US1: audit table shows set/get/rm actions...${RESET}"
+S13_AUDIT_EXIT=0
+S13_AUDIT_OUT=$(cd "$S13_DIR" && "$ENVY" audit 2>&1) || S13_AUDIT_EXIT=$?
+assert_eq "audit exits 0" "0" "$S13_AUDIT_EXIT"
+assert_contains "audit shows set action" "set" "$S13_AUDIT_OUT"
+assert_contains "audit shows get action" "get" "$S13_AUDIT_OUT"
+assert_contains "audit shows rm action" "rm" "$S13_AUDIT_OUT"
+
+# ── US2: values are never shown ──────────────────────────────────────────────────
+echo -e "${YELLOW}  [S13] US2: audit never shows secret values...${RESET}"
+assert_not_contains "audit hides sk_test_value" "sk_test_value" "$S13_AUDIT_OUT"
+assert_not_contains "audit hides tempvalue" "tempvalue" "$S13_AUDIT_OUT"
+
+# ── US3: JSON output valid ──────────────────────────────────────────────────────
+echo -e "${YELLOW}  [S13] US3: audit --format json is valid...${RESET}"
+S13_JSON_EXIT=0
+S13_JSON=$(cd "$S13_DIR" && "$ENVY" audit --format json 2>/dev/null) || S13_JSON_EXIT=$?
+assert_eq "audit --format json exits 0" "0" "$S13_JSON_EXIT"
+
+S13_JSON_LEN=$(echo "$S13_JSON" | jq 'length' 2>/dev/null || echo "INVALID")
+TOTAL=$((TOTAL + 1))
+if [[ "$S13_JSON_LEN" -ge 3 ]] 2>/dev/null; then
+  echo -e "  ${GREEN}✓${RESET} audit JSON has 3+ entries (${S13_JSON_LEN})"
+  PASS=$((PASS + 1))
+else
+  echo -e "  ${RED}✗${RESET} audit JSON has 3+ entries"
+  echo -e "    ${DIM}expected >= 3, got: ${S13_JSON_LEN}${RESET}"
+  FAIL=$((FAIL + 1))
+fi
+
+S13_ACTIONS=$(echo "$S13_JSON" | jq -r '[.[].action] | unique | join(",")' 2>/dev/null || echo "INVALID")
+assert_contains "JSON actions include get" "get" "$S13_ACTIONS"
+
+# =============================================================================
+# SCENARIO 14 — Pre-commit hook installer (`envy hooks install`)
+#
+# Verifies:
+#   - Hook is installed in .git/hooks/pre-commit
+#   - Hook contains the envy marker line
+#   - Commit is blocked when a leak is present
+# =============================================================================
+
+section "Scenario 14 — Pre-commit Hook Installer"
+
+echo -e "${YELLOW}  [S14] Setting up git project...${RESET}"
+init_project "$WORKSPACE/s14-hooks"
+S14_DIR="$PROJECT_DIR"
+
+# init_project does not run git init, so do it here.
+(cd "$S14_DIR" && git init -q)
+
+# ── US1: hooks install succeeds ────────────────────────────────────────────────
+echo -e "${YELLOW}  [S14] US1: hooks install succeeds...${RESET}"
+S14_INSTALL_EXIT=0
+S14_INSTALL_OUT=$(cd "$S14_DIR" && "$ENVY" hooks install 2>&1) || S14_INSTALL_EXIT=$?
+assert_eq "hooks install exits 0" "0" "$S14_INSTALL_EXIT"
+assert_file_exists "pre-commit hook created" "$S14_DIR/.git/hooks/pre-commit"
+
+# ── US2: hook file contains the envy marker ────────────────────────────────────
+echo -e "${YELLOW}  [S14] US2: hook contains envy marker...${RESET}"
+S14_HOOK_CONTENT=$(cat "$S14_DIR/.git/hooks/pre-commit")
+assert_contains "hook has envy marker" "# envy-hook" "$S14_HOOK_CONTENT"
+
+# ── US3: hook blocks commit when a leak is present ──────────────────────────────
+echo -e "${YELLOW}  [S14] US3: commit blocked when leak present...${RESET}"
+(cd "$S14_DIR" && "$ENVY" set "API_KEY=sk_live_leaked_value" -e development)
+echo 'const key = "sk_live_leaked_value";' > "$S14_DIR/source.ts"
+(cd "$S14_DIR" && git add -A 2>/dev/null)
+
+# Put the envy binary on PATH so the hook's `command -v envy` check succeeds.
+S14_ENVY_DIR=$(dirname "$ENVY")
+S14_COMMIT_EXIT=0
+(cd "$S14_DIR" && PATH="$S14_ENVY_DIR:$PATH" git commit -m "test" 2>/dev/null) \
+  || S14_COMMIT_EXIT=$?
+assert_ne "commit with leak is blocked (exit != 0)" "0" "$S14_COMMIT_EXIT"
 
 # =============================================================================
 # Summary
