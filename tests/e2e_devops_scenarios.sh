@@ -14,10 +14,11 @@
 #  12. Vault-leak Scanner (envy scan)
 #  13. Audit Log (envy audit)
 #  14. Pre-commit Hook Installer (envy hooks install)
+#  15. Documentation examples (envy docs)
 #
 # Requirements:
 #   - `envy` binary built or passed via ENVY_BIN env var
-#   - `jq` available (for scenario 2 JSON merge and scenario 4 tampering)
+#   - `jq` available (for scenarios 2, 4, 15)
 #
 # Usage:
 #   chmod +x tests/e2e_devops_scenarios.sh
@@ -979,6 +980,69 @@ S14_COMMIT_EXIT=0
 (cd "$S14_DIR" && PATH="$S14_ENVY_DIR:$PATH" git commit -m "test" 2>/dev/null) \
   || S14_COMMIT_EXIT=$?
 assert_ne "commit with leak is blocked (exit != 0)" "0" "$S14_COMMIT_EXIT"
+
+# =============================================================================
+# SCENARIO 15 — Documentation examples (examples/)
+#
+# Runs the four CI-verified example scripts (FR-004, FR-005):
+#   basic     — tutorial.sh: init → set → list → run
+#   team-sync — dev_a.sh + dev_b.sh: encrypt → decrypt round-trip
+#   ci-cd     — headless.sh: status JSON in_sync gate + diff gate
+#   monorepo  — script.sh: nested projects, independent secrets
+# =============================================================================
+
+section "Scenario 15 — Documentation examples"
+
+S15_ENVY_BIN="$ENVY"
+S15_EXAMPLES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/examples"
+
+# ── US1: basic ──────────────────────────────────────────────────────────────
+echo -e "${YELLOW}  [S15] US1: basic tutorial runs end-to-end...${RESET}"
+S15_BASIC_EXIT=0
+S15_BASIC_OUT="$(ENVY_BIN="$S15_ENVY_BIN" bash "$S15_EXAMPLES_DIR/basic/tutorial.sh")" \
+  || S15_BASIC_EXIT=$?
+assert_eq "basic tutorial exits 0" "0" "$S15_BASIC_EXIT"
+assert_contains "basic run injects the secret" "injected: dummy_token_123" "$S15_BASIC_OUT"
+assert_contains "basic prints success line" "basic: OK" "$S15_BASIC_OUT"
+
+# ── US2: team-sync ──────────────────────────────────────────────────────────
+echo -e "${YELLOW}  [S15] US2: team-sync round-trip (dev_a → dev_b)...${RESET}"
+S15_HANDOFF="$WORKSPACE/s15-handoff"
+S15_DEV_A_EXIT=0
+S15_DEV_A_OUT="$(ENVY_BIN="$S15_ENVY_BIN" ARTIFACT_OUT="$S15_HANDOFF" \
+  bash "$S15_EXAMPLES_DIR/team-sync/dev_a.sh")" || S15_DEV_A_EXIT=$?
+assert_eq "dev_a encrypt exits 0" "0" "$S15_DEV_A_EXIT"
+assert_file_exists "dev_a produced envy.enc" "$S15_HANDOFF/envy.enc"
+
+S15_DEV_B_EXIT=0
+S15_DEV_B_OUT="$(ENVY_BIN="$S15_ENVY_BIN" ARTIFACT_IN="$S15_HANDOFF/envy.enc" \
+  bash "$S15_EXAMPLES_DIR/team-sync/dev_b.sh")" || S15_DEV_B_EXIT=$?
+assert_eq "dev_b decrypt exits 0" "0" "$S15_DEV_B_EXIT"
+assert_contains "dev_b decrypt round-trips the secret" "injected: dummy_team_token" "$S15_DEV_B_OUT"
+assert_contains "team-sync prints success line" "team-sync: OK" "$S15_DEV_B_OUT"
+
+# ── US3: ci-cd ──────────────────────────────────────────────────────────────
+echo -e "${YELLOW}  [S15] US3: ci-cd headless pipeline with JSON gate...${RESET}"
+S15_CICD_EXIT=0
+S15_CICD_OUT="$(ENVY_BIN="$S15_ENVY_BIN" bash "$S15_EXAMPLES_DIR/ci-cd/headless.sh")" \
+  || S15_CICD_EXIT=$?
+assert_eq "ci-cd headless exits 0" "0" "$S15_CICD_EXIT"
+S15_STATUS_JSON="$(echo "$S15_CICD_OUT" | sed -n '/"environments"/p' | head -1)"
+S15_IN_SYNC=$(echo "$S15_STATUS_JSON" \
+  | jq -r '.environments[] | select(.name == "development") | .status' 2>/dev/null \
+  || echo "INVALID")
+assert_eq "ci-cd status JSON is in_sync" "in_sync" "$S15_IN_SYNC"
+assert_contains "ci-cd prints success line" "ci-cd: OK" "$S15_CICD_OUT"
+
+# ── US4: monorepo ───────────────────────────────────────────────────────────
+echo -e "${YELLOW}  [S15] US4: monorepo nested projects resolve independently...${RESET}"
+S15_MONO_EXIT=0
+S15_MONO_OUT="$(ENVY_BIN="$S15_ENVY_BIN" bash "$S15_EXAMPLES_DIR/monorepo/script.sh")" \
+  || S15_MONO_EXIT=$?
+assert_eq "monorepo script exits 0" "0" "$S15_MONO_EXIT"
+assert_contains "app-a resolves its own secret" "app-a: APP_A_TOKEN" "$S15_MONO_OUT"
+assert_contains "app-b resolves its own secret" "app-b: APP_B_TOKEN" "$S15_MONO_OUT"
+assert_contains "monorepo prints success line" "monorepo: OK" "$S15_MONO_OUT"
 
 # =============================================================================
 # Summary

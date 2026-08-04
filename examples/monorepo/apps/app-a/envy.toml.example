@@ -1,0 +1,10 @@
+# Example manifest for apps/app-a — copy to envy.toml only as a reference.
+#
+# A committed envy.toml would break `envy init` (exit code 3: project
+# already exists), so examples ship .example files only. Run `envy init`
+# inside the project directory to generate the real manifest.
+#
+# Created by `envy init`. Do not delete — this file links the directory to its vault.
+# project_id = "00000000-0000-4000-8000-000000000001"   # <- generated on `envy init`
+
+# rotation_reminder_days = 90

@@ -119,6 +119,29 @@ jobs:
         run: ENVY_BIN=./target/debug/envy bash tests/e2e_devops_scenarios.sh
 
       # -----------------------------------------------------------------------
+      # Docs check (links + template sections)
+      # FR-010: (a) every docs/commands/envy-*.md link in README.md resolves
+      # to an existing file; (b) every docs/commands/envy-*.md page contains
+      # all 6 mandatory template headings (_template.md excluded).
+      # Pure shell — no vault, no keyring, no binary required.
+      # -----------------------------------------------------------------------
+      - name: Docs check (links + template sections)
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUIRED_HEADINGS="## What it does ## Aliases ## Syntax & flags ## Examples ## How it works ## Related commands"
+          for link in $(grep -oE 'docs/commands/envy-[a-z]+\.md' README.md | sort -u); do
+            test -f "$link" || { echo "README links to missing page: $link"; exit 1; }
+          done
+          for page in docs/commands/envy-*.md; do
+            [ "$page" = "docs/commands/_template.md" ] && continue
+            for heading in $REQUIRED_HEADINGS; do
+              grep -qF "$heading" "$page" || { echo "Missing '$heading' in $page"; exit 1; }
+            done
+          done
+          echo "Docs check OK"
+
+      # -----------------------------------------------------------------------
       # Completions smoke test — verifies the hidden command exits 0 and
       # produces non-empty output for bash and zsh.
       # No vault, no keyring required.
@@ -173,3 +196,66 @@ jobs:
           STATUS=$("$ENVY_BIN" status --format json)
           echo "$STATUS"
           echo "$STATUS" | jq -e '.environments[] | select(.status == "in_sync")' > /dev/null
+
+  # ---------------------------------------------------------------------------
+  # vhs-demos — demo GIF generation (FR-006, FR-007)
+  #
+  # Runs ONLY on push to master (fork PRs cannot push, so rendering there
+  # would always fail). Renders the three hero tapes with the release binary
+  # on PATH, then auto-commits the GIFs to docs/assets/ — skipping the
+  # commit when nothing changed (no-op) to avoid commit loops.
+  # ---------------------------------------------------------------------------
+  vhs-demos:
+    name: Generate demo GIFs (master only)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Render quickstart.tape
+        uses: charmbracelet/vhs-action@v2
+        env:
+          PATH: "${{ github.workspace }}/target/release:$PATH"
+        with:
+          path: vhs/quickstart.tape
+          install-fonts: true
+
+      - name: Render team-sync.tape
+        uses: charmbracelet/vhs-action@v2
+        env:
+          PATH: "${{ github.workspace }}/target/release:$PATH"
+        with:
+          path: vhs/team-sync.tape
+          install-fonts: true
+
+      - name: Render ci-cd.tape
+        uses: charmbracelet/vhs-action@v2
+        env:
+          PATH: "${{ github.workspace }}/target/release:$PATH"
+        with:
+          path: vhs/ci-cd.tape
+          install-fonts: true
+
+      - name: Commit updated GIFs (skip if unchanged)
+        run: |
+          git add docs/assets/*.gif
+          if git diff --cached --quiet; then
+            echo "No GIF changes — skipping commit"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "docs: update demo GIFs"
+            git push
+          fi

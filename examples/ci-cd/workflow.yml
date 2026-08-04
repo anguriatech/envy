@@ -1,0 +1,36 @@
+name: Deploy with envy secrets
+
+# Copy this into your repo as .github/workflows/your-name.yml, set the
+# ENVY_KEY repository secret to the envelope passphrase used by
+# `envy encrypt`, and adapt the deployment step.
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      # Activates envy's keyring fallback (deterministic ephemeral key) —
+      # the local vault is throwaway in CI; the artifact is the source of truth.
+      ENVY_PASSPHRASE: "ci-ephemeral"
+      # Envelope passphrase for the development environment, stored as a
+      # GitHub Actions secret (never in the repo).
+      ENVY_PASSPHRASE_DEVELOPMENT: ${{ secrets.ENVY_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install envy
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/anguriatech/envy/releases/latest/download/envy-installer.sh | sh
+          echo "$HOME/.envy/bin" >> "$GITHUB_PATH"
+
+      - name: Restore secrets from envy.enc
+        run: envy decrypt < /dev/null
+
+      - name: Gate on sync state (in_sync required)
+        run: |
+          envy status --format json | jq -e '.environments[] | select(.name == "development" and .status == "in_sync")' > /dev/null
+
+      - name: Deploy with injected secrets
+        run: envy run -e development -- ./scripts/deploy.sh
