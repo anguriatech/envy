@@ -28,7 +28,7 @@ echo "== list"
 "$ENVY" list
 
 echo "== run"
-"$ENVY" run -- bash -c 'echo "injected: ${DEMO_TOKEN}"'
+"$ENVY" run -- sh -c 'echo "injected: ${DEMO_TOKEN}"'
 
 [ -f envy.toml ] || { echo "error: envy.toml missing"; exit 1; }
 echo "basic: OK"

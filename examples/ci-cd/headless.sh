@@ -38,6 +38,6 @@ echo "== diff gate (0 = in sync)"
 "$ENVY" diff -e development
 
 echo "== run"
-"$ENVY" run -e development -- bash -c 'echo "pipeline token: ${PIPELINE_TOKEN}"'
+"$ENVY" run -e development -- sh -c 'echo "pipeline token: ${PIPELINE_TOKEN}"'
 
 echo "ci-cd: OK"

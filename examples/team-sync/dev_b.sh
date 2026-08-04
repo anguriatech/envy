@@ -33,6 +33,6 @@ echo "== dev_b: verify round-trip"
 "$ENVY" get TEAM_TOKEN
 
 echo "== dev_b: run with injected secret"
-"$ENVY" run -- bash -c 'echo "injected: ${TEAM_TOKEN}"'
+"$ENVY" run -- sh -c 'echo "injected: ${TEAM_TOKEN}"'
 
 echo "team-sync: OK"
