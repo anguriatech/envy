@@ -208,7 +208,8 @@ jobs:
   vhs-demos:
     name: Generate demo GIFs (master only)
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    # TEMPORARY: removed condition to test the unzip fix on this PR.
+    # RESTORE before merge: if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     permissions:
       contents: write
 
