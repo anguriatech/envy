@@ -225,6 +225,9 @@ jobs:
       - name: Build release binary
         run: cargo build --release
 
+      - name: Install VHS dependencies
+        run: sudo apt-get update && sudo apt-get install -y unzip
+
       - name: Render quickstart.tape
         uses: charmbracelet/vhs-action@v2
         env:
