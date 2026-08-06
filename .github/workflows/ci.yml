@@ -226,26 +226,23 @@ jobs:
         run: cargo build --release
 
       - name: Install VHS dependencies
-        run: sudo apt-get update && sudo apt-get install -y unzip
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip
+          echo "${{ github.workspace }}/target/release" >> "$GITHUB_PATH"
 
       - name: Render quickstart.tape
         uses: charmbracelet/vhs-action@v2
-        env:
-          PATH: "${{ github.workspace }}/target/release:$PATH"
         with:
           path: vhs/quickstart.tape
 
       - name: Render team-sync.tape
         uses: charmbracelet/vhs-action@v2
-        env:
-          PATH: "${{ github.workspace }}/target/release:$PATH"
         with:
           path: vhs/team-sync.tape
 
       - name: Render ci-cd.tape
         uses: charmbracelet/vhs-action@v2
-        env:
-          PATH: "${{ github.workspace }}/target/release:$PATH"
         with:
           path: vhs/ci-cd.tape
 
