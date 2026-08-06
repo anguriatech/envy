@@ -317,23 +317,23 @@ Every secret value travels through the codebase in `zeroize::Zeroizing<String>`.
 
 | Command | Alias | Description |
 |---------|-------|-------------|
-| `envy init` | — | Create `envy.toml`, register project in vault |
-| `envy set KEY=VALUE [-e ENV] [--stdin]` | — | Store or update a secret |
-| `envy get KEY [-e ENV]` | — | Print a single decrypted value to stdout |
-| `envy list [-e ENV]` | `ls` | List all key names (values never printed by default) |
-| `envy rm KEY [-e ENV]` | `remove`, `unset` | Delete a secret |
-| `envy run [-e ENV] -- CMD` | — | Inject secrets and run a child process |
-| `envy migrate FILE [-e ENV]` | — | Import all `KEY=VALUE` pairs from a `.env` file |
-| `envy encrypt [-e ENV]` | `enc` | Seal vault into `envy.enc` (strict: passphrase must match an existing envelope — use `envy rotate` to change it) |
-| `envy decrypt` | `dec` | Unseal `envy.enc` and restore secrets |
-| `envy export [-e ENV] [--format]` | — | Print all secrets to stdout (dotenv / JSON / shell) |
-| `envy diff [-e ENV] [--reveal]` | `df` | Compare vault against `envy.enc` before encrypting |
-| `envy status` | `st` | Show sync status dashboard, including a rotation reminder (no passphrase required) |
-| `envy rotate [-e ENV]` | — | Re-seal an envelope with a new passphrase (verifies current first) |
-| `envy scan [-e ENV] [--reveal]` | — | Scan the working tree for plaintext copies of vault secrets |
-| `envy audit [-e ENV] [--limit N]` | `au` | Show the local history of `set`/`get`/`rm`/`run` actions |
-| `envy hooks install [--force]` | — | Install a pre-commit hook that blocks commits leaking a vault secret |
-| `envy completions SHELL` | — | Print shell completion script to stdout |
+| [`envy init`](docs/commands/envy-init.md) | — | Create `envy.toml`, register project in vault |
+| [`envy set KEY=VALUE [-e ENV] [--stdin]`](docs/commands/envy-set.md) | — | Store or update a secret |
+| [`envy get KEY [-e ENV]`](docs/commands/envy-get.md) | — | Print a single decrypted value to stdout |
+| [`envy list [-e ENV]`](docs/commands/envy-list.md) | `ls` | List all key names (values never printed by default) |
+| [`envy rm KEY [-e ENV]`](docs/commands/envy-rm.md) | `remove`, `unset` | Delete a secret |
+| [`envy run [-e ENV] -- CMD`](docs/commands/envy-run.md) | — | Inject secrets and run a child process |
+| [`envy migrate FILE [-e ENV]`](docs/commands/envy-migrate.md) | — | Import all `KEY=VALUE` pairs from a `.env` file |
+| [`envy encrypt [-e ENV]`](docs/commands/envy-encrypt.md) | `enc` | Seal vault into `envy.enc` (strict: passphrase must match an existing envelope — use `envy rotate` to change it) |
+| [`envy decrypt`](docs/commands/envy-decrypt.md) | `dec` | Unseal `envy.enc` and restore secrets |
+| [`envy export [-e ENV] [--format]`](docs/commands/envy-export.md) | — | Print all secrets to stdout (dotenv / JSON / shell) |
+| [`envy diff [-e ENV] [--reveal]`](docs/commands/envy-diff.md) | `df` | Compare vault against `envy.enc` before encrypting |
+| [`envy status`](docs/commands/envy-status.md) | `st` | Show sync status dashboard, including a rotation reminder (no passphrase required) |
+| [`envy rotate [-e ENV]`](docs/commands/envy-rotate.md) | — | Re-seal an envelope with a new passphrase (verifies current first) |
+| [`envy scan [-e ENV] [--reveal]`](docs/commands/envy-scan.md) | — | Scan the working tree for plaintext copies of vault secrets |
+| [`envy audit [-e ENV] [--limit N]`](docs/commands/envy-audit.md) | `au` | Show the local history of `set`/`get`/`rm`/`run` actions |
+| [`envy hooks install [--force]`](docs/commands/envy-hooks.md) | — | Install a pre-commit hook that blocks commits leaking a vault secret |
+| [`envy completions SHELL`](docs/commands/envy-completions.md) | — | Print shell completion script to stdout |
 
 ### Output Formats
 
@@ -511,6 +511,15 @@ When you type a passphrase by hand during interactive `envy encrypt` or `envy ro
 This is purely informational — a low score never blocks or rejects a passphrase. Security rests on Argon2id + AES-256-GCM, not on this heuristic. The hint nudges you toward envy's built-in Diceware passphrase generator (press Enter on an empty prompt).
 
 </details>
+
+---
+
+## Documentation
+
+- [Per-command reference](docs/commands/) — one page per command: what it does, syntax, exit codes, and related commands
+- [Examples](examples/) — copy-pasteable, CI-verified workflows (basic, team-sync, CI/CD, monorepo)
+- [Developer guide](docs/developer-guide.md) — architecture, module map, and contribution notes
+- [Demo videos](docs/assets/) — terminal walkthroughs of quickstart, team sync, and CI/CD (generated in CI)
 
 ---
 

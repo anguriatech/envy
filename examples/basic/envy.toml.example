@@ -1,0 +1,13 @@
+# Example manifest — copy to envy.toml only if you want a committed reference.
+#
+# Normally `envy init` creates envy.toml for you with a fresh random
+# project_id. Do NOT commit a real envy.toml with a fixed project_id in
+# examples/ — `envy init` refuses to overwrite an existing project
+# (exit code 3), so a committed manifest would break the tutorial.
+#
+# Created by `envy init`. Do not delete — this file links the directory to its vault.
+# project_id = "00000000-0000-4000-8000-000000000000"   # <- generated on `envy init`
+
+# Days a secret can go unmodified before `envy status` flags it for rotation.
+# Uncomment to override the default (90).
+# rotation_reminder_days = 90

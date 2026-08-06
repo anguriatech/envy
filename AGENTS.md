@@ -72,4 +72,5 @@ Rust stable (edition 2024, MSRV 1.85): Follow standard conventions
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
+at `specs/015-docs-examples-demos/plan.md` (spec: `specs/015-docs-examples-demos/spec.md`).
 <!-- SPECKIT END -->

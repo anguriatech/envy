@@ -77,6 +77,7 @@ envy/
 │   ├── cli/
 │   │   ├── mod.rs        # Commands enum, run() dispatch, artifact_path() helper
 │   │   ├── commands.rs   # cmd_* handlers (pub(super)) — one function per subcommand
+│   │   ├── format.rs     # OutputFormat (table/json/dotenv/shell) — print_output, shell escaping
 │   │   └── error.rs      # CliError enum, exit-code mappers, formatting helpers
 │   ├── core/
 │   │   ├── mod.rs        # Re-exports — public face of the business logic layer
@@ -85,12 +86,16 @@ envy/
 │   │   ├── sync.rs       # seal_artifact, unseal_artifact, write_artifact, read_artifact
 │   │   ├── diff.rs       # compute_diff — pure diff logic (ChangeType, DiffEntry, DiffReport)
 │   │   ├── status.rs     # derive_sync_status, get_status_report
+│   │   ├── audit.rs      # audit_best_effort — set/get/rm/run action log (key names + timestamps)
+│   │   ├── scan.rs       # vault-leak scanner — exact-value match against the working tree
 │   │   └── error.rs      # CoreError enum
 │   ├── crypto/
 │   │   ├── mod.rs        # Re-exports — public face of the cryptography layer
 │   │   ├── aead.rs       # AES-256-GCM encrypt/decrypt, EncryptedSecret
 │   │   ├── artifact.rs   # Argon2id KDF, seal_envelope, unseal_envelope, SyncArtifact types
 │   │   ├── keyring.rs    # get_or_create_master_key (OS credential store)
+│   │   ├── strength.rs   # passphrase strength scoring (informational, never blocking)
+│   │   ├── diceware.rs   # built-in Diceware passphrase generator
 │   │   └── error.rs      # CryptoError enum
 │   └── db/
 │       ├── mod.rs        # Vault struct, open/close, newtype IDs
@@ -98,15 +103,22 @@ envy/
 │       ├── projects.rs   # Project CRUD
 │       ├── environments.rs  # Environment CRUD
 │       ├── secrets.rs    # Secret upsert/get/list/delete
+│       ├── audit.rs      # audit_logs table access
+│       ├── sync_markers.rs  # V2 sync markers (vault ↔ envy.enc drift tracking)
 │       └── error.rs      # DbError enum
 │
 ├── tests/
 │   ├── db.rs                # Integration tests for the database layer
 │   ├── sync_artifact.rs     # E2E integration tests for the envy.enc pipeline
-│   └── cli_integration.rs   # CLI integration tests (require OS keyring; ignored in CI)
+│   ├── cli_integration.rs   # CLI integration tests (require OS keyring; ignored in CI)
+│   └── e2e_devops_scenarios.sh  # Multi-user DevOps scenario tests (incl. Scenario 15)
 │
 ├── docs/
-│   └── developer-guide.md   # This file
+│   ├── developer-guide.md   # This file
+│   ├── commands/            # Per-command reference pages (envy-<cmd>.md)
+│   └── assets/              # Demo GIFs (rendered by CI from vhs/*.tape)
+├── examples/                # CI-verified copy-paste workflows (basic/team-sync/ci-cd/monorepo)
+├── vhs/                     # Hero-flow demo tapes (quickstart/team-sync/ci-cd)
 ├── specs/                   # Feature specs, plans, contracts, and task lists
 └── Cargo.toml
 ```
