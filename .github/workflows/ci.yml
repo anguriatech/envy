@@ -230,7 +230,6 @@ jobs:
           PATH: "${{ github.workspace }}/target/release:$PATH"
         with:
           path: vhs/quickstart.tape
-          install-fonts: true
 
       - name: Render team-sync.tape
         uses: charmbracelet/vhs-action@v2
@@ -238,7 +237,6 @@ jobs:
           PATH: "${{ github.workspace }}/target/release:$PATH"
         with:
           path: vhs/team-sync.tape
-          install-fonts: true
 
       - name: Render ci-cd.tape
         uses: charmbracelet/vhs-action@v2
@@ -246,7 +244,6 @@ jobs:
           PATH: "${{ github.workspace }}/target/release:$PATH"
         with:
           path: vhs/ci-cd.tape
-          install-fonts: true
 
       - name: Commit updated GIFs (skip if unchanged)
         run: |
