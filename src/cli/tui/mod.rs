@@ -51,13 +51,20 @@ pub(super) fn run() -> Result<(), CliError> {
     let projects = ops::load_projects(&vault)?;
     let project_ids = projects.iter().map(|project| project.id.clone()).collect();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let (artifact_path, rotation_reminder_days) = manifest_context(&cwd)?;
+    let (artifact_path, manifest_project, rotation_reminder_days) = manifest_context(&cwd)?;
     let artifact_label = artifact_path
         .parent()
         .and_then(|parent| parent.file_name())
         .map(|name| format!("{}/envy.enc", name.to_string_lossy()))
         .unwrap_or_else(|| "envy.enc".into());
     let mut app = App::new(projects);
+    // Launching bare `envy` inside a project directory should land on that
+    // project, not on whichever row happens to be first in the vault.
+    if let Some(project_id) = &manifest_project
+        && let Some(index) = App::project_index_by_id(&app.projects, project_id)
+    {
+        app.active_project = index;
+    }
     app.artifact_path = artifact_label;
     let mut session = Session {
         terminal: ratatui::init(),
@@ -101,13 +108,14 @@ pub(super) fn run() -> Result<(), CliError> {
     Ok(())
 }
 
-fn manifest_context(cwd: &std::path::Path) -> Result<(PathBuf, u32), CliError> {
+fn manifest_context(cwd: &std::path::Path) -> Result<(PathBuf, Option<String>, u32), CliError> {
     match crate::core::find_manifest(cwd) {
         Ok((manifest, manifest_dir)) => Ok((
             super::artifact_path(&manifest_dir),
+            Some(manifest.project_id.clone()),
             manifest.rotation_reminder_days,
         )),
-        Err(crate::core::CoreError::ManifestNotFound) => Ok((cwd.join("envy.enc"), 90)),
+        Err(crate::core::CoreError::ManifestNotFound) => Ok((cwd.join("envy.enc"), None, 90)),
         Err(error) => Err(CliError::Output(error.to_string())),
     }
 }

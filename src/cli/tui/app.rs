@@ -347,6 +347,13 @@ impl App {
         self.expanded = false;
     }
 
+    /// Index of the project whose id matches `id`, if present.
+    pub fn project_index_by_id(projects: &[ProjectSummary], id: &str) -> Option<usize> {
+        projects
+            .iter()
+            .position(|project| project.id.as_str() == id)
+    }
+
     pub fn filtered_project_indices(&self, query: &str) -> Vec<usize> {
         let query = query.to_ascii_lowercase();
         self.projects
@@ -649,5 +656,21 @@ mod tests {
         assert_eq!(palette_matches("seal"), vec!["seal"]);
         assert!(palette_matches("SECRET").contains(&"new"));
         assert!(palette_matches("nonexistent-action").is_empty());
+    }
+
+    #[test]
+    fn project_index_by_id_finds_and_misses() {
+        let projects = vec![
+            ProjectSummary {
+                id: crate::db::ProjectId("a".into()),
+                name: "alpha".into(),
+            },
+            ProjectSummary {
+                id: crate::db::ProjectId("b".into()),
+                name: "beta".into(),
+            },
+        ];
+        assert_eq!(App::project_index_by_id(&projects, "b"), Some(1));
+        assert_eq!(App::project_index_by_id(&projects, "zzz"), None);
     }
 }
