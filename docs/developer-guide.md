@@ -535,11 +535,16 @@ The strict-verify block lives in `cmd_encrypt` in `src/cli/commands.rs`. It call
 src/crypto/artifact.rs  ← pure crypto: Argon2id KDF, AES-256-GCM, Base64, types
 src/core/sync.rs        ← orchestration: vault I/O, JSON serialization, file R/W
 src/cli/commands.rs     ← UX: passphrase resolution, coloured output, exit codes
+src/cli/tui/            ← full-screen console (ratatui): app state, input router,
+                          rendering, ops wrapper, clipboard worker thread
 ```
 
 `crypto/artifact.rs` knows nothing about files, vaults, or the CLI. `core/sync.rs`
 knows nothing about terminal colours or exit codes. This separation means each layer
-can be tested and audited in isolation.
+can be tested and audited in isolation. The TUI layer (`src/cli/tui/`) is render and
+input only — every vault/artifact mutation goes through `core::`, secrets and
+passphrases live in `Zeroizing` buffers, and the clipboard worker clears copied
+values 30 seconds after the most recent copy.
 
 ---
 

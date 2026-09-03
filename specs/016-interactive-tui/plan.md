@@ -147,7 +147,8 @@ from rendering (`app.rs` pure → unit-testable headlessly; `ui.rs` thin rendere
 
 ### Step 7 — Docs + gates
 - README: "Interactive TUI" section (launch conditions, hotkey table, silent rules) (FR-021).
-- Feature plan copy under `docs/features/016-interactive-tui/` (repo convention, FR-021).
+- Feature documentation lives under `specs/016-interactive-tui/` only (FR-021 amended
+  2026-09-03: the `docs/features/` copy was removed as duplication).
 - Full run: `cargo test`, `cargo clippy -- -D warnings`, `cargo audit`; manual smoke
   checklist from `quickstart.md` on a TTY.
 

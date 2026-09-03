@@ -170,12 +170,12 @@
 
 ## Phase 9: User Story 7 - Documentation (Priority: P3)
 
-**Goal**: README "Interactive TUI" section + feature plan under `docs/features/` per repo convention.
+**Goal**: README "Interactive TUI" section; feature documentation under `specs/` as the single source of truth (FR-021 amended: the `docs/features/` copy was removed on 2026-09-03).
 
 **Independent Test**: Reviewer follows README section and exercises every documented hotkey successfully.
 
 - [X] T036 [P] [US7] Add "Interactive TUI" section to README.md: launch conditions (bare `envy` + TTY), full hotkey table (contracts/tui-entry-point.md), silent-execution rules, NO_COLOR note (FR-021)
-- [X] T037 [P] [US7] Create feature plan under `docs/features/016-interactive-tui/` per repo convention (plan.md + summary), consistent with `specs/016-interactive-tui/` (FR-021)
+- [X] T037 [P] [US7] ~~Create feature plan under `docs/features/016-interactive-tui/`~~ Superseded (FR-021 amended): the duplicate copy was removed; feature docs live in `specs/016-interactive-tui/` only
 - [X] T038 [US7] Run quickstart.md validation: `cargo test`, `cargo clippy -- -D warnings`, `cargo audit`, plus the manual TTY smoke checklist (SC-007)
 
 **Checkpoint**: Docs complete; all gates green
@@ -263,6 +263,11 @@
 - [X] T085 [P] [US6] Normalize environment names in `mark_env_sealed` and `rotate_env` artifact lookups (FR-059; fixes "record not found" on mixed-case names).
 - [X] T086 [US7] Docs: README TUI section rewrite, hotkey contract table, quickstart checklist (20 steps), data-model (palette/inspector/clipboard), AGENTS.md.
 - [X] T087 Validation: full suite (220 tests), clippy `--all-targets -D warnings`, fmt, pty smoke of palette/seal-preview/rotate/copy/legend flows.
+
+### Phase 20 — Demo tape & launch focus (2026-09-03, FR-060)
+
+- [X] T088 [P] [US1] Launch focus: bare `envy` inside a project directory lands on that project (`App::project_index_by_id` + manifest project id in `manifest_context`), regression-tested (FR-060). Found by the VHS demo render landing on the wrong vault row.
+- [X] T089 [P] [US7] Demo tape hardening: throwaway `$HOME` vault (no real data in the GIF, no vault pollution), obviously-fake secret values, removed broken `LoopOffset`, added brand/seal-preview/rotate/copy moments; rendered to `docs/assets/tui-demo.gif` and frame-verified.
 
 ---
 

@@ -161,10 +161,15 @@ A teammate pulls the repo and runs `envy decrypt`. Done. No Slack messages, no s
 
 ### Interactive TUI
 
+<div align="center">
+  <img src="docs/assets/tui-demo.gif" alt="Envy TUI demo" width="100%" />
+</div>
+
 Run `envy` without a subcommand from an interactive terminal to open the full-screen vault
 workstation: a three-panel console showing your project tree, the selected environment's
 masked secrets, and an inspector column with sync state and metadata — all without changing
-the output contract of existing commands.
+the output contract of existing commands. Launching from a project directory focuses that
+project's entry in the tree.
 
 | Key | Panel | Action |
 |---|---|---|
@@ -558,7 +563,7 @@ This is purely informational — a low score never blocks or rejects a passphras
 - [Per-command reference](docs/commands/) — one page per command: what it does, syntax, exit codes, and related commands
 - [Examples](examples/) — copy-pasteable, CI-verified workflows (basic, team-sync, CI/CD, monorepo)
 - [Developer guide](docs/developer-guide.md) — architecture, module map, and contribution notes
-- [Demo videos](docs/assets/) — terminal walkthroughs of quickstart, team sync, and CI/CD (generated in CI)
+- [Demo videos](docs/assets/) — terminal walkthroughs of quickstart, team sync, CI/CD, and the interactive TUI (generated with VHS)
 
 ---
 

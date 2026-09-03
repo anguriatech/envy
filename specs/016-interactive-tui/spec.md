@@ -104,7 +104,7 @@ A user can quit or crash the TUI without leaking secrets: all decrypted values l
 
 ### User Story 7 - Documentation (Priority: P3)
 
-A new user or contributor finds an "Interactive TUI" section in the README explaining what the TUI is, how to launch it, its hotkeys, and the silent-execution rules; the feature keeps a plan under `docs/features/016-interactive-tui/` following repo convention.
+A new user or contributor finds an "Interactive TUI" section in the README — with the rendered demo GIF embedded — explaining what the TUI is, how to launch it, its hotkeys, and the silent-execution rules; the feature keeps its documentation under `specs/016-interactive-tui/` as the single source of truth (the duplicate `docs/features/` copy was removed on 2026-09-03 before it could rot further).
 
 **Why this priority**: Documentation has no functional risk and only helps after the feature exists; lowest priority while remaining required before merge.
 
@@ -113,7 +113,7 @@ A new user or contributor finds an "Interactive TUI" section in the README expla
 **Acceptance Scenarios**:
 
 1. **Given** the README, **When** a reader opens the Interactive TUI section, **Then** it documents: launch conditions (bare `envy` + TTY), the full hotkey table, and the silent-execution rules.
-2. **Given** the repo, **When** a maintainer looks for the feature plan, **Then** `docs/features/016-interactive-tui/` exists with plan content following the repo convention.
+2. **Given** the repo, **When** a maintainer looks for the feature documentation, **Then** it lives under `specs/016-interactive-tui/` and the README links to the rendered demo.
 
 ---
 
@@ -157,7 +157,7 @@ A new user or contributor finds an "Interactive TUI" section in the README expla
 - **FR-018**: The vault MUST be closed cleanly when the TUI exits.
 - **FR-019**: `NO_COLOR` MUST be honored: with it set, the TUI renders without color codes.
 - **FR-020**: The feature MUST include unit tests for banner gradient interpolation, search filtering, mask/unmask state, and lock/unlock transitions, and an integration test asserting bare `envy` with piped stdout prints help with no ANSI escapes.
-- **FR-021**: The README MUST gain an "Interactive TUI" section (launch conditions, hotkey table, silent-execution rules) and the repo MUST include the feature plan under `docs/features/016-interactive-tui/`.
+- **FR-021**: The README MUST gain an "Interactive TUI" section (launch conditions, hotkey table, silent-execution rules) and MUST embed the rendered demo (`docs/assets/tui-demo.gif`). Feature documentation lives under `specs/016-interactive-tui/` only — no duplicate copy under `docs/features/`. *(Amended 2026-09-03: the `docs/features/` requirement was removed — the assumed repo convention does not exist and the duplicate had already gone stale.)*
 - **FR-022**: TUI sync MUST resolve `envy.enc` from the discovered manifest directory, not process cwd, so nested-project and subdirectory launches target the same artifact as plain CLI commands.
 - **FR-023**: TUI sync MUST update sync markers only after artifact write succeeds; failed writes MUST NOT report the environment as in sync.
 - **FR-024**: The active search query MUST be visible while search is active, and remain visible when filtered results are shown.
@@ -196,6 +196,7 @@ A new user or contributor finds an "Interactive TUI" section in the README expla
 - **FR-057**: `Y` MUST be panel-scoped: in the secrets panel it copies the selected value to the system clipboard WITHOUT rendering it in clear, clearing the clipboard 30 seconds after the most recent copy; in the project tree it imports from `envy.enc`. Copy failures surface as status-bar errors.
 - **FR-058**: Color MUST be functional and semantic: brand violet marks focus/identity only, green marks in-sync, amber marks drift, red marks errors and destructive confirmations, dim gray marks metadata. `NO_COLOR` MUST still render a fully usable UI.
 - **FR-059**: Environment lookups for sync/rotate/mark MUST normalize names (lowercase) against the vault and artifact keys so mixed-case input cannot produce "record not found" or false passphrase mismatches.
+- **FR-060**: Launching the TUI from a project directory MUST focus that project in the tree (resolved from the manifest's project id), falling back to the first vault project when no manifest exists or its project is absent from the vault.
 
 ### Key Entities *(include if feature involves data)*
 
