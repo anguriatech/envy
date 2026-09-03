@@ -43,11 +43,11 @@ Unlocked ⇄ Locked
 - **Rules**: live filter on secret keys, case-insensitive substring (FR-010); empty query = full table; zero matches renders "no matches" state.
 
 ### PopupState (editor)
-- **Variants**: `NewSecret`, `EditSecret(SecretEntry)`, `DeleteConfirm(SecretEntry)`, `Passphrase(env: String)`.
-- **Project actions**: `ProjectPicker(query: String)`, `DeleteProject(name: String, confirmation: String, counts)` and `Help` are non-secret UI popups.
-- **Read-only operational popups**: `Status(text)`, `Diff(text)`, and passphrase-scoped decrypt/import actions expose no secret values by default.
+- **Variants**: `NewSecret`, `EditSecret(SecretEntry)`, `DeleteConfirm(SecretEntry)`, `Passphrase(env: String)`, `ConfirmImport(env: String)` (FR-043).
+- **Project actions**: `ProjectPicker(query: String)`, `DeleteProject(name: String, confirmation: String, counts)` and `Help { scroll }` are non-secret UI popups.
+- **Read-only operational popups**: `Status(text, scroll)`, `Diff(text, scroll)` and passphrase-scoped decrypt/import actions expose no secret values by default; long text popups scroll with ↑↓/j/k (FR-041).
 - **Fields**: `key_input: String`, `value_input: Zeroizing<String>`, `revealed: bool` (Ctrl+R toggle, FR-012 amendment).
-- **Rules**: input is masked by default; Enter confirms, Esc cancels; popup open → global hotkeys `L`/`S`/`Q` are ignored (edge case: "Lock while a popup is open").
+- **Rules**: input is masked by default; Enter confirms, Esc cancels; popup open → global hotkeys `L`/`S`/`Q` are ignored (edge case: "Lock while a popup is open"); paste works in every text field (FR-046); cancelling the sync passphrase popup aborts the remaining queue (FR-049).
 
 ### SyncState
 - **Fields**: `phase: Idle | ResolvingPassphrase(env) | Working | Done(Ok | Err(String))`.

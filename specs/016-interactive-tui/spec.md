@@ -151,7 +151,7 @@ A new user or contributor finds an "Interactive TUI" section in the README expla
 - **FR-012**: The TUI MUST support creating (`N`), editing (`E`), and deleting (`D`, with confirmation) secrets from popups with a text input; secret values entered in popups MUST be masked by default, with an explicit reveal toggle (e.g. `Ctrl+R`) while typing.
 - **FR-013**: `L` MUST lock the vault: close the vault connection, wipe the master key and all decrypted secret values from TUI state, and clear the secrets table (cached project/environment structure is retained — it is not secret). `U` MUST unlock it by re-fetching the master key, reopening the vault, and reloading the secrets table.
 - **FR-014**: `S` MUST trigger a GitOps sync (seal/unseal of the `envy.enc` artifact) showing a working indicator in the status bar while it runs. Passphrases per environment MUST be resolved in this order: (a) `ENVY_PASSPHRASE_<ENV>` / `ENVY_PASSPHRASE` environment variables when set (headless mode, no UI); (b) otherwise a masked passphrase input popup inside the TUI for each environment being sealed.
-- **FR-015**: The bottom status bar MUST show the hotkey hints: `[Q] Quit [B] Banner [F] Find [SPACE] Unmask [E] Edit [N] New [D] Delete [S] Sync [L] Lock [U] Unlock`.
+- **FR-015**: The bottom status bar MUST show the vault lock state, the active project and environment, the latest status message, and short hotkey pointers (see FR-038): `? Help … Q Quit`. *(Amended: was a full `[Q] Quit [B] Banner …` hint line; superseded by FR-038 on 2026-08-12.)*
 - **FR-016**: All decrypted secret values in TUI state MUST be held in zeroized buffers that are wiped on exit or unexpected termination.
 - **FR-017**: The terminal (alternate screen + raw mode) MUST be restored on every exit path, including panic and unexpected termination.
 - **FR-018**: The vault MUST be closed cleanly when the TUI exits.
@@ -176,6 +176,16 @@ A new user or contributor finds an "Interactive TUI" section in the README expla
 - **FR-037**: Selecting a project MUST preserve the tree cursor on that project; loading its environments MUST NOT reset navigation to the first row.
 - **FR-038**: The footer MUST remain short and readable on narrow terminals, pointing users to `?` for complete help instead of listing every command.
 - **FR-039**: The help popup MUST use readable grouped sections with aligned controls and descriptions; project-picker help MUST explain search, selection, and closing.
+- **FR-040**: `Esc` MUST NOT exit the TUI in any state: it closes popups and the search line, and at the top level MUST show a "Press Q to quit" hint. `Q`/`Ctrl+C` MUST remain the only quit keys.
+- **FR-041**: Help, Diff, and Status popups MUST scroll with `↑`/`↓`/`j`/`k` (and `PgUp`/`PgDn`/`Home`/`End`) instead of clipping content; the popup title MUST show a scroll hint when content overflows.
+- **FR-042**: The secret Delete confirmation MUST name the affected key and environment; the Edit popup title MUST name the edited key; the New popup MUST advance from the key field to the value field on `Enter`.
+- **FR-043**: `Y` (import) MUST ask for confirmation in a popup before overwriting vault secrets, with an explicit "existing secrets with the same keys will be overwritten" warning.
+- **FR-044**: Mutating or vault-reading operations (`N`/`E`/`D`/`S`/`T`/`G`/`Y`/`X`) MUST be guarded while the vault is locked and show a single clear message: "Vault locked — press U to unlock"; they MUST NOT open popups that fail on confirm.
+- **FR-045**: The status bar MUST render error messages visually distinct from informational messages (highlighted, honoring `NO_COLOR`); it MUST include the active project name alongside the environment.
+- **FR-046**: Text input in popups and the search box MUST support bracketed paste (`Ctrl+Shift+V`/middle-click) through crossterm `Event::Paste`, with control characters stripped.
+- **FR-047**: The secret search filter MUST remain visible in the Secrets panel title while active (even after the search line is closed with `Enter`); `Esc` closes the search line and `Enter` keeps the filter applied.
+- **FR-048**: The passphrase popup title MUST reflect its purpose (Sync / Diff / Import) and the passphrase field MUST render a fixed-width mask that does not reveal the passphrase length.
+- **FR-049**: Cancelling the sync passphrase popup MUST abort the remaining environment sync queue.
 
 ### Key Entities *(include if feature involves data)*
 

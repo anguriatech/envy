@@ -51,6 +51,9 @@ pub enum Popup {
         secret_count: usize,
         confirmation: String,
     },
+    ConfirmImport {
+        environment: String,
+    },
     ProjectPicker {
         query: String,
         index: usize,
@@ -60,12 +63,16 @@ pub enum Popup {
         value: Zeroizing<String>,
         purpose: PassphrasePurpose,
     },
-    Help,
+    Help {
+        scroll: usize,
+    },
     Diff {
         text: String,
+        scroll: usize,
     },
     Status {
         text: String,
+        scroll: usize,
     },
 }
 
@@ -105,6 +112,7 @@ pub struct App {
     pub vault_state: VaultState,
     pub popup: Option<Popup>,
     pub status: String,
+    pub status_is_error: bool,
     pub working: bool,
 }
 
@@ -127,8 +135,21 @@ impl App {
             vault_state: VaultState::Unlocked,
             popup: None,
             status: String::from("Ready — press ? for help"),
+            status_is_error: false,
             working: false,
         }
+    }
+
+    /// Record an informational status message (rendered normally).
+    pub fn note(&mut self, message: impl Into<String>) {
+        self.status = message.into();
+        self.status_is_error = false;
+    }
+
+    /// Record an error status message (rendered highlighted so it stands out).
+    pub fn fail(&mut self, message: impl Into<String>) {
+        self.status = message.into();
+        self.status_is_error = true;
     }
 
     pub fn active_environment(&self) -> Option<&EnvironmentSummary> {
@@ -310,6 +331,16 @@ pub fn sync_status_icon(status: &SyncStatus) -> char {
     }
 }
 
+/// Inner (border-excluded) height of a scrollable text popup for `lines` of content.
+pub fn popup_inner_height(lines: usize) -> usize {
+    lines.clamp(5, 20)
+}
+
+/// Maximum scroll offset for a scrollable text popup with `lines` of content.
+pub fn popup_max_scroll(lines: usize) -> usize {
+    lines.saturating_sub(popup_inner_height(lines))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,5 +504,24 @@ mod tests {
         app.move_sidebar_cursor(1_000);
         assert_eq!(app.sidebar_cursor, 99);
         assert_eq!(app.current_sidebar_entry(), Some(SidebarEntry::Project(99)));
+    }
+
+    #[test]
+    fn note_and_fail_track_error_flag() {
+        let mut app = app();
+        app.fail("boom");
+        assert!(app.status_is_error);
+        assert_eq!(app.status, "boom");
+        app.note("all good");
+        assert!(!app.status_is_error);
+        assert_eq!(app.status, "all good");
+    }
+
+    #[test]
+    fn popup_scroll_bounds_fit_content() {
+        assert_eq!(popup_inner_height(3), 5);
+        assert_eq!(popup_inner_height(50), 20);
+        assert_eq!(popup_max_scroll(3), 0);
+        assert_eq!(popup_max_scroll(30), 10);
     }
 }

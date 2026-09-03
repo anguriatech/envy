@@ -168,19 +168,20 @@ output contract of existing commands.
 | Key | Action |
 |---|---|
 | `Q` / `Ctrl+C` | Quit and restore terminal |
+| `Esc` | Close popup/search, or show quit hint (never quits by itself) |
 | `B` | Toggle full or compact banner |
 | `Tab`, arrows, `Enter` | Navigate project tree, environments, and secrets |
 | `↑` / `↓` | Move through all projects and expanded environments |
 | `Enter` / `→` / `←` | Expand/select tree entry or collapse project |
 | `P` | Search and choose a project |
 | `X` | Delete selected project (exact-name confirmation) |
-| `?` | Open TUI help |
-| `F` | Search secret keys |
+| `?` | Open TUI help (scrollable with `↑`/`↓`/`j`/`k`) |
+| `F` | Search secret keys (filter persists after closing) |
 | `Space` | Reveal selected value temporarily |
-| `N` / `E` / `D` | Create, edit, or delete a secret |
+| `N` / `E` / `D` | Create, edit, or delete a secret (delete shows the key name) |
 | `L` / `U` | Lock or unlock the vault |
 | `S` | Sync project environments into `envy.enc` |
-| `T` / `G` / `Y` | Status / diff / import from `envy.enc` |
+| `T` / `G` / `Y` | Status / diff / import from `envy.enc` (import asks confirmation) |
 | `Ctrl+R` | Reveal value while editing a popup |
 
 Values are masked by default and cleared from memory when the vault is locked. Set
@@ -190,7 +191,9 @@ successfully, keeping scripts and CI safe.
 
 The project tree marks environments with `✓` (in sync), `~` (needs sync), or `·` (never
 sealed). `T` shows stale secrets and rotation status; `G` compares active environment against
-`envy.enc`; `Y` imports the sealed environment back into the vault.
+`envy.enc`; `Y` imports the sealed environment back into the vault (after confirmation).
+Pasting (`Ctrl+Shift+V` or middle-click) works inside every text field, including masked
+passphrase prompts.
 The footer intentionally shows only primary navigation. Press `?` for complete grouped help;
 long project trees and project-picker results scroll while keeping the current selection visible.
 

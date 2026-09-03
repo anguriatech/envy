@@ -2105,7 +2105,7 @@ mod tests {
 
     /// Shared helper: runs the migrate line-parser over `input` and returns
     /// (valid_pairs, malformed_count) — mirroring cmd_migrate's inner loop.
-    fn parse_env_lines<'a>(input: &'a str) -> (Vec<(&'a str, &'a str)>, usize) {
+    fn parse_env_lines(input: &str) -> (Vec<(&str, &str)>, usize) {
         let mut valid: Vec<(&str, &str)> = Vec::new();
         let mut malformed = 0usize;
         for line in input.lines() {

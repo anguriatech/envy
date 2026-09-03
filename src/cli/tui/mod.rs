@@ -6,9 +6,14 @@ mod ui;
 mod widgets;
 
 use crate::{cli::CliError, db::ProjectId};
-use app::{App, Focus, Input, PassphrasePurpose, Popup, SidebarEntry, VaultState};
+use app::{
+    App, Focus, Input, PassphrasePurpose, Popup, SidebarEntry, VaultState, popup_max_scroll,
+};
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use ratatui::crossterm::ExecutableCommand;
+use ratatui::crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyModifiers,
+};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -26,6 +31,7 @@ struct Session {
 impl Drop for Session {
     fn drop(&mut self) {
         close_vault(&mut self.vault);
+        let _ = std::io::stdout().execute(DisableBracketedPaste);
         ratatui::restore();
     }
 }
@@ -52,6 +58,7 @@ pub(super) fn run() -> Result<(), CliError> {
         rotation_reminder_days,
         app: App::new(projects),
     };
+    let _ = std::io::stdout().execute(EnableBracketedPaste);
     session.app.expanded = true;
     session.load_active_project()?;
     loop {
@@ -62,15 +69,21 @@ pub(super) fn run() -> Result<(), CliError> {
         if event::poll(Duration::from_millis(100))
             .map_err(|error| CliError::Output(error.to_string()))?
         {
-            if let Event::Key(key) =
-                event::read().map_err(|error| CliError::Output(error.to_string()))?
-            {
-                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                    break;
+            match event::read().map_err(|error| CliError::Output(error.to_string()))? {
+                Event::Key(key) => {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        break;
+                    }
+                    if session.handle_key(key.code, key.modifiers)? {
+                        break;
+                    }
                 }
-                if session.handle_key(key.code, key.modifiers)? {
-                    break;
+                Event::Paste(text) => {
+                    session.handle_paste(&text);
                 }
+                _ => {}
             }
         }
     }
@@ -146,12 +159,13 @@ impl Session {
             Some(SidebarEntry::Project(pi)) => {
                 if pi == self.app.active_project && self.app.expanded {
                     self.app.expanded = false;
-                    self.app.status = "Project collapsed".into();
+                    self.app.note("Project collapsed");
                 } else {
                     self.app.active_project = pi;
                     self.app.expanded = true;
                     self.load_active_project()?;
-                    self.app.status = "Project selected — press Down for environments".into();
+                    self.app
+                        .note("Project selected — press Down for environments");
                     self.app.sidebar_cursor = self
                         .app
                         .flatten_sidebar()
@@ -164,7 +178,7 @@ impl Session {
                 self.app.active_project = pi;
                 self.app.active_environment = ei;
                 self.load_active_environment()?;
-                self.app.status = "Environment selected — Tab opens secrets".into();
+                self.app.note("Environment selected — Tab opens secrets");
             }
             None => {}
         }
@@ -192,6 +206,9 @@ impl Session {
                 KeyCode::Esc => {
                     self.app.search_active = false;
                 }
+                KeyCode::Enter => {
+                    self.app.search_active = false;
+                }
                 KeyCode::Backspace => {
                     self.app.handle_input(Input::Backspace);
                 }
@@ -202,9 +219,12 @@ impl Session {
             }
             return Ok(false);
         }
+        if code == KeyCode::Esc {
+            self.app.note("Press Q to quit");
+            return Ok(false);
+        }
         let input = match code {
             KeyCode::Char('q') | KeyCode::Char('Q') => Input::Quit,
-            KeyCode::Esc => Input::Quit,
             KeyCode::Up => Input::Up,
             KeyCode::Down => Input::Down,
             KeyCode::Left => Input::Left,
@@ -241,7 +261,7 @@ impl Session {
             self.key = None;
             self.sync_queue.clear();
             self.app.lock();
-            self.app.status = "Vault locked — press U to unlock".into();
+            self.app.note("Vault locked — press U to unlock");
             return Ok(false);
         }
         if input == Input::Character('u') || input == Input::Character('U') {
@@ -251,26 +271,29 @@ impl Session {
                     self.key = Some(key);
                     self.app.vault_state = VaultState::Unlocked;
                     if let Err(error) = self.load_active_project() {
-                        self.app.status = error.to_string();
+                        self.app.fail(error.to_string());
                         self.app.lock();
                         self.key = None;
                         if let Some(vault) = self.vault.take() {
                             let _ = vault.close();
                         }
                     } else {
-                        self.app.status = "Vault unlocked".into();
+                        self.app.note("Vault unlocked");
                     }
                 }
                 Err(error) => {
                     self.app.vault_state = VaultState::Locked;
-                    self.app.status = error.to_string();
+                    self.app.fail(error.to_string());
                 }
             }
             return Ok(false);
         }
         if input == Input::Character('n') || input == Input::Character('N') {
+            if !self.require_unlocked() {
+                return Ok(false);
+            }
             if self.project_ids.is_empty() || self.app.active_environment().is_none() {
-                self.app.status = "Select an environment first".into();
+                self.app.fail("Select an environment first");
                 return Ok(false);
             }
             self.app.popup = Some(Popup::New {
@@ -282,6 +305,9 @@ impl Session {
             return Ok(false);
         }
         if input == Input::Character('e') || input == Input::Character('E') {
+            if !self.require_unlocked() {
+                return Ok(false);
+            }
             if let Some(index) = self.app.current_secret_index() {
                 self.app.popup = Some(Popup::Edit {
                     index,
@@ -289,19 +315,25 @@ impl Session {
                     revealed: false,
                 });
             } else {
-                self.app.status = "Select a secret first".into();
+                self.app.fail("Select a secret first");
             }
             return Ok(false);
         }
         if input == Input::Character('d') || input == Input::Character('D') {
+            if !self.require_unlocked() {
+                return Ok(false);
+            }
             if let Some(index) = self.app.current_secret_index() {
                 self.app.popup = Some(Popup::Delete { index });
             } else {
-                self.app.status = "Select a secret first".into();
+                self.app.fail("Select a secret first");
             }
             return Ok(false);
         }
         if input == Input::Character('x') || input == Input::Character('X') {
+            if !self.require_unlocked() {
+                return Ok(false);
+            }
             self.open_project_delete()?;
             return Ok(false);
         }
@@ -313,7 +345,7 @@ impl Session {
             return Ok(false);
         }
         if input == Input::Character('?') {
-            self.app.popup = Some(Popup::Help);
+            self.app.popup = Some(Popup::Help { scroll: 0 });
             return Ok(false);
         }
         if input == Input::Character('s') || input == Input::Character('S') {
@@ -321,18 +353,110 @@ impl Session {
             return Ok(false);
         }
         if input == Input::Character('t') || input == Input::Character('T') {
+            if !self.require_unlocked() {
+                return Ok(false);
+            }
             self.show_status()?;
             return Ok(false);
         }
         if input == Input::Character('g') || input == Input::Character('G') {
+            if !self.require_unlocked() {
+                return Ok(false);
+            }
             self.show_diff()?;
             return Ok(false);
         }
         if input == Input::Character('y') || input == Input::Character('Y') {
-            self.decrypt_from_artifact()?;
+            if !self.require_unlocked() {
+                return Ok(false);
+            }
+            self.confirm_import()?;
             return Ok(false);
         }
         Ok(self.app.handle_input(input))
+    }
+
+    fn require_unlocked(&mut self) -> bool {
+        if self.vault.is_none() {
+            self.app.fail("Vault locked — press U to unlock");
+            return false;
+        }
+        true
+    }
+
+    fn handle_paste(&mut self, text: &str) {
+        let cleaned: String = text.chars().filter(|c| !c.is_control()).collect();
+        if cleaned.is_empty() {
+            return;
+        }
+        if self.app.search_active {
+            self.app.search.push_str(&cleaned);
+            self.app.secret_index = 0;
+            return;
+        }
+        match self.app.popup.take() {
+            Some(Popup::New {
+                mut key,
+                mut value,
+                editing_value,
+                revealed,
+            }) => {
+                if editing_value {
+                    value.push_str(&cleaned);
+                } else {
+                    key.push_str(&cleaned);
+                }
+                self.app.popup = Some(Popup::New {
+                    key,
+                    value,
+                    editing_value,
+                    revealed,
+                });
+            }
+            Some(Popup::Edit {
+                index,
+                mut value,
+                revealed,
+            }) => {
+                value.push_str(&cleaned);
+                self.app.popup = Some(Popup::Edit {
+                    index,
+                    value,
+                    revealed,
+                });
+            }
+            Some(Popup::DeleteProject {
+                name,
+                environment_count,
+                secret_count,
+                mut confirmation,
+            }) => {
+                confirmation.push_str(&cleaned);
+                self.app.popup = Some(Popup::DeleteProject {
+                    name,
+                    environment_count,
+                    secret_count,
+                    confirmation,
+                });
+            }
+            Some(Popup::ProjectPicker { mut query, .. }) => {
+                query.push_str(&cleaned);
+                self.app.popup = Some(Popup::ProjectPicker { query, index: 0 });
+            }
+            Some(Popup::Passphrase {
+                environment,
+                mut value,
+                purpose,
+            }) => {
+                value.push_str(&cleaned);
+                self.app.popup = Some(Popup::Passphrase {
+                    environment,
+                    value,
+                    purpose,
+                });
+            }
+            other => self.app.popup = other,
+        }
     }
 
     fn handle_popup(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Result<bool, CliError> {
@@ -361,7 +485,10 @@ impl Session {
                     KeyCode::Char('r') if modifiers.contains(KeyModifiers::CONTROL) => {
                         revealed = !revealed
                     }
-                    KeyCode::Enter if editing_value => {
+                    KeyCode::Enter if !editing_value => {
+                        editing_value = true;
+                    }
+                    KeyCode::Enter => {
                         if let Some(project) =
                             self.project_ids.get(self.app.active_project).cloned()
                         {
@@ -380,9 +507,10 @@ impl Session {
                                     &value,
                                 )
                             });
-                            self.app.status = result
-                                .map(|_| "Secret saved".into())
-                                .unwrap_or_else(|error| error.to_string());
+                            match result {
+                                Ok(()) => self.app.note("Secret saved"),
+                                Err(error) => self.app.fail(error.to_string()),
+                            }
                             self.load_active_environment()?;
                         }
                         return Ok(false);
@@ -436,9 +564,10 @@ impl Session {
                                     &value,
                                 )
                             });
-                            self.app.status = result
-                                .map(|_| "Secret updated".into())
-                                .unwrap_or_else(|error| error.to_string());
+                            match result {
+                                Ok(()) => self.app.note("Secret updated"),
+                                Err(error) => self.app.fail(error.to_string()),
+                            }
                             self.load_active_environment()?;
                         }
                         return Ok(false);
@@ -465,9 +594,10 @@ impl Session {
                         let result = self.with_unlocked(|vault, _| {
                             ops::delete_secret(vault, &project, &environment, &name)
                         });
-                        self.app.status = result
-                            .map(|_| "Secret deleted".into())
-                            .unwrap_or_else(|error| error.to_string());
+                        match result {
+                            Ok(()) => self.app.note("Secret deleted"),
+                            Err(error) => self.app.fail(error.to_string()),
+                        }
                         self.load_active_environment()?;
                     }
                     return Ok(false);
@@ -490,7 +620,7 @@ impl Session {
                     }
                     KeyCode::Enter => {
                         if confirmation != name {
-                            self.app.status = "Type the project name exactly to confirm".into();
+                            self.app.fail("Type the project name exactly to confirm");
                             self.app.popup = Some(Popup::DeleteProject {
                                 name,
                                 environment_count,
@@ -508,7 +638,7 @@ impl Session {
                             })?;
                         self.with_unlocked(|vault, _| ops::delete_project(vault, &project_id))?;
                         self.refresh_projects()?;
-                        self.app.status = format!("Project deleted: {name}");
+                        self.app.note(format!("Project deleted: {name}"));
                         return Ok(false);
                     }
                     _ => {}
@@ -520,6 +650,14 @@ impl Session {
                     confirmation,
                 });
             }
+            Popup::ConfirmImport { environment } => match code {
+                KeyCode::Esc => return Ok(false),
+                KeyCode::Enter => {
+                    self.run_import(&environment)?;
+                    return Ok(false);
+                }
+                _ => self.app.popup = Some(Popup::ConfirmImport { environment }),
+            },
             Popup::ProjectPicker {
                 mut query,
                 mut index,
@@ -555,7 +693,7 @@ impl Session {
                                 .position(|entry| *entry == SidebarEntry::Project(project_index))
                                 .unwrap_or(0);
                         } else {
-                            self.app.status = "No matching projects".into();
+                            self.app.fail("No matching projects");
                         }
                         return Ok(false);
                     }
@@ -567,32 +705,52 @@ impl Session {
                 }
                 self.app.popup = Some(Popup::ProjectPicker { query, index });
             }
-            Popup::Help => match code {
-                KeyCode::Esc
-                | KeyCode::Enter
-                | KeyCode::Char('?')
-                | KeyCode::Char('q')
-                | KeyCode::Char('Q') => return Ok(false),
-                _ => self.app.popup = Some(Popup::Help),
-            },
-            Popup::Diff { text } => match code {
-                KeyCode::Esc
-                | KeyCode::Enter
-                | KeyCode::Char('q')
-                | KeyCode::Char('Q')
-                | KeyCode::Char('g')
-                | KeyCode::Char('G') => return Ok(false),
-                _ => self.app.popup = Some(Popup::Diff { text }),
-            },
-            Popup::Status { text } => match code {
-                KeyCode::Esc
-                | KeyCode::Enter
-                | KeyCode::Char('q')
-                | KeyCode::Char('Q')
-                | KeyCode::Char('t')
-                | KeyCode::Char('T') => return Ok(false),
-                _ => self.app.popup = Some(Popup::Status { text }),
-            },
+            Popup::Help { scroll } => {
+                if let Some(next) =
+                    self.scroll_popup(code, widgets::HELP_TEXT.lines().count(), scroll)
+                {
+                    self.app.popup = Some(Popup::Help { scroll: next });
+                    return Ok(false);
+                }
+                match code {
+                    KeyCode::Esc
+                    | KeyCode::Enter
+                    | KeyCode::Char('?')
+                    | KeyCode::Char('q')
+                    | KeyCode::Char('Q') => return Ok(false),
+                    _ => self.app.popup = Some(Popup::Help { scroll }),
+                }
+            }
+            Popup::Diff { text, scroll } => {
+                if let Some(next) = self.scroll_popup(code, text.lines().count(), scroll) {
+                    self.app.popup = Some(Popup::Diff { text, scroll: next });
+                    return Ok(false);
+                }
+                match code {
+                    KeyCode::Esc
+                    | KeyCode::Enter
+                    | KeyCode::Char('q')
+                    | KeyCode::Char('Q')
+                    | KeyCode::Char('g')
+                    | KeyCode::Char('G') => return Ok(false),
+                    _ => self.app.popup = Some(Popup::Diff { text, scroll }),
+                }
+            }
+            Popup::Status { text, scroll } => {
+                if let Some(next) = self.scroll_popup(code, text.lines().count(), scroll) {
+                    self.app.popup = Some(Popup::Status { text, scroll: next });
+                    return Ok(false);
+                }
+                match code {
+                    KeyCode::Esc
+                    | KeyCode::Enter
+                    | KeyCode::Char('q')
+                    | KeyCode::Char('Q')
+                    | KeyCode::Char('t')
+                    | KeyCode::Char('T') => return Ok(false),
+                    _ => self.app.popup = Some(Popup::Status { text, scroll }),
+                }
+            }
             Popup::Passphrase {
                 environment,
                 value,
@@ -600,7 +758,12 @@ impl Session {
             } => {
                 let mut value = value;
                 match code {
-                    KeyCode::Esc => return Ok(false),
+                    KeyCode::Esc => {
+                        if purpose == PassphrasePurpose::Sync {
+                            self.sync_queue.clear();
+                        }
+                        return Ok(false);
+                    }
                     KeyCode::Backspace => {
                         value.pop();
                     }
@@ -631,6 +794,21 @@ impl Session {
         Ok(false)
     }
 
+    /// Applies Up/Down/j/k scrolling inside a text popup; returns the new scroll
+    /// offset when the key was a scroll key, or `None` for any other key.
+    fn scroll_popup(&self, code: KeyCode, lines: usize, scroll: usize) -> Option<usize> {
+        let max = popup_max_scroll(lines);
+        match code {
+            KeyCode::Up | KeyCode::Char('k') => Some(scroll.saturating_sub(1)),
+            KeyCode::Down | KeyCode::Char('j') => Some((scroll + 1).min(max)),
+            KeyCode::PageUp => Some(scroll.saturating_sub(10)),
+            KeyCode::PageDown => Some((scroll + 10).min(max)),
+            KeyCode::Home => Some(0),
+            KeyCode::End => Some(max),
+            _ => None,
+        }
+    }
+
     fn sync_with_passphrase(
         &mut self,
         environment: &str,
@@ -639,7 +817,7 @@ impl Session {
         let project = match self.project_ids.get(self.app.active_project).cloned() {
             Some(project) => project,
             None => {
-                self.app.status = "Select an environment first".into();
+                self.app.fail("Select an environment first");
                 return Ok(());
             }
         };
@@ -656,9 +834,10 @@ impl Session {
         });
         self.app.working = false;
         let succeeded = result.is_ok();
-        self.app.status = result
-            .map(|_| "Sync complete".into())
-            .unwrap_or_else(|error| error.to_string());
+        match result {
+            Ok(()) => self.app.note("Sync complete"),
+            Err(error) => self.app.fail(error.to_string()),
+        }
         if succeeded {
             let vault = self
                 .vault
@@ -679,7 +858,7 @@ impl Session {
 
     fn open_project_delete(&mut self) -> Result<(), CliError> {
         let Some(project) = self.app.projects.get(self.app.active_project) else {
-            self.app.status = "No project selected".into();
+            self.app.fail("No project selected");
             return Ok(());
         };
         let (environment_count, secret_count) =
@@ -714,11 +893,10 @@ impl Session {
 
     fn begin_sync(&mut self) -> Result<(), CliError> {
         let Some(project) = self.project_ids.get(self.app.active_project).cloned() else {
-            self.app.status = "Select an environment first".into();
+            self.app.fail("Select a project first");
             return Ok(());
         };
-        if self.vault.is_none() {
-            self.app.status = "Vault locked".into();
+        if !self.require_unlocked() {
             return Ok(());
         }
         let environments = {
@@ -766,7 +944,7 @@ impl Session {
                 }
             }
         }
-        self.app.status = "Sync complete".into();
+        self.app.note("Sync complete");
         let vault = self
             .vault
             .as_ref()
@@ -784,7 +962,7 @@ impl Session {
         let project = match self.project_ids.get(self.app.active_project).cloned() {
             Some(project) => project,
             None => {
-                self.app.status = "Select a project first".into();
+                self.app.fail("Select a project first");
                 return Ok(());
             }
         };
@@ -820,7 +998,7 @@ impl Session {
                 ));
             }
         }
-        self.app.popup = Some(Popup::Status { text });
+        self.app.popup = Some(Popup::Status { text, scroll: 0 });
         Ok(())
     }
 
@@ -828,14 +1006,14 @@ impl Session {
         let _project = match self.project_ids.get(self.app.active_project).cloned() {
             Some(project) => project,
             None => {
-                self.app.status = "Select a project first".into();
+                self.app.fail("Select a project first");
                 return Ok(());
             }
         };
         let environment = match self.app.active_environment().map(|e| e.name.clone()) {
             Some(env) => env,
             None => {
-                self.app.status = "Select an environment first".into();
+                self.app.fail("Select an environment first");
                 return Ok(());
             }
         };
@@ -873,37 +1051,42 @@ impl Session {
                 passphrase,
             )
         })?;
-        self.app.popup = Some(Popup::Diff { text });
+        self.app.popup = Some(Popup::Diff { text, scroll: 0 });
         Ok(())
     }
 
-    fn decrypt_from_artifact(&mut self) -> Result<(), CliError> {
+    fn confirm_import(&mut self) -> Result<(), CliError> {
         let _project = match self.project_ids.get(self.app.active_project).cloned() {
             Some(project) => project,
             None => {
-                self.app.status = "Select a project first".into();
+                self.app.fail("Select a project first");
                 return Ok(());
             }
         };
         let environment = match self.app.active_environment().map(|e| e.name.clone()) {
             Some(env) => env,
             None => {
-                self.app.status = "Select an environment first".into();
+                self.app.fail("Select an environment first");
                 return Ok(());
             }
         };
-        let passphrase = match ops::resolve_passphrase(&environment) {
+        self.app.popup = Some(Popup::ConfirmImport { environment });
+        Ok(())
+    }
+
+    fn run_import(&mut self, environment: &str) -> Result<(), CliError> {
+        let passphrase = match ops::resolve_passphrase(environment) {
             Some(p) => p,
             None => {
                 self.app.popup = Some(Popup::Passphrase {
-                    environment,
+                    environment: environment.to_owned(),
                     value: zeroize::Zeroizing::new(String::new()),
                     purpose: PassphrasePurpose::Decrypt,
                 });
                 return Ok(());
             }
         };
-        self.decrypt_with_passphrase(&environment, &passphrase)
+        self.decrypt_with_passphrase(environment, &passphrase)
     }
 
     fn decrypt_with_passphrase(
@@ -926,7 +1109,8 @@ impl Session {
                 passphrase,
             )
         })?;
-        self.app.status = format!("Imported {count} secrets from envy.enc");
+        self.app
+            .note(format!("Imported {count} secrets from envy.enc"));
         self.load_active_environment()?;
         Ok(())
     }

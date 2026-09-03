@@ -27,19 +27,22 @@ envy                      # banner + sidebar + table; Q quits cleanly
 
 ## Manual smoke checklist (TTY only)
 
-1. `envy` → banner renders with bluish-purple gradient; header shows `[Unlocked]` and active env.
+1. `envy` → banner renders with bluish-purple gradient; header shows `[Unlocked]`, project and active env.
 2. `B` collapses/expands the banner.
-3. `F` + type → visible search box and table filter update live; `Esc` closes search.
+3. `F` + type → visible search box and table filter update live; `Enter` closes the line and the filter stays visible in the panel title; `Esc` closes.
 4. `Space` on a row → value reveals; arrow down → re-masks.
-5. `N` → new secret popup (masked input, `Ctrl+R` reveals); `Enter` saves → `envy get KEY` outside shows it.
-6. `E` / `D` round-trip; `D` asks confirmation.
-7. `S` → syncs `envy.enc` (env-var passphrase if set, else masked popup per env); working indicator shows.
-8. `L` → header `[Locked]`, table cleared, structure kept; `U` → reloaded.
-9. `NO_COLOR=1 envy` → banner/UI plain, still usable.
-10. `envy` with stdout piped → help on stderr, exit 0, no escapes (headless CI-safe).
-11. Run `envy` from a nested project directory → `S` updates `envy.enc` beside discovered `envy.toml`, not nested cwd.
-12. `P` opens searchable project selection; `X` deletes selected project only after exact-name confirmation; `?` opens help.
-13. `↑↓` moves through all projects/tree entries; `Enter` or `→` expands/selects; `←` collapses.
+5. `N` → new secret popup (masked input, `Ctrl+R` reveals); `Enter` on the key field moves to the value field; `Enter` saves → `envy get KEY` outside shows it.
+6. `E` / `D` round-trip; `D` shows the key name and env and asks confirmation.
+7. `S` → syncs `envy.enc` (env-var passphrase if set, else masked popup per env); working indicator shows; `Esc` on the popup aborts the queue.
+8. `L` → header `[Locked]`, table cleared, structure kept; pressing `N`/`S`/`T` now shows "Vault locked — press U to unlock"; `U` → reloaded.
+9. `Esc` on the main screen shows the "Press Q to quit" hint and does NOT exit; `Q`/`Ctrl+C` exits.
+10. `?` opens scrollable grouped help (`↑↓`/`j`/`k` scroll); `Y` asks confirmation before importing; `G`/`T` popups scroll if long.
+11. Paste (`Ctrl+Shift+V`) into the New/Edit/passphrase/search fields.
+12. `NO_COLOR=1 envy` → banner/UI plain, still usable; errors still readable.
+13. `envy` with stdout piped → help on stderr, exit 0, no escapes (headless CI-safe).
+14. Run `envy` from a nested project directory → `S` updates `envy.enc` beside discovered `envy.toml`, not nested cwd.
+15. `P` opens searchable project selection; `X` deletes selected project only after exact-name confirmation.
+16. `↑↓` moves through all projects/tree entries; `Enter` or `→` expands/selects; `←` collapses.
 14. `T` shows project status, `G` shows active-environment diff, `Y` imports/unseals active environment.
 15. Long project lists scroll while keeping highlighted project visible; `P` picker scrolls all matches.
 16. Footer shows primary controls only; press `?` for grouped complete help.

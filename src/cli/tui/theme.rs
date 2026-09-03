@@ -72,6 +72,20 @@ pub fn color(rgb: Rgb) -> Color {
     }
 }
 
+/// Color used to highlight error messages in the status bar.
+pub fn alert() -> Color {
+    if std::env::var_os("NO_COLOR").is_some() || !console::colors_enabled() {
+        Color::Reset
+    } else {
+        Color::Red
+    }
+}
+
+/// Color used to mark the focused panel title.
+pub fn focus() -> Color {
+    color(STOPS[1])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

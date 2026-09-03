@@ -234,6 +234,20 @@
 - [X] T062 [P] [US3] Add regression tests for long-list cursor visibility, project selection cursor stability, picker search, and help/footer content.
 - [X] T063 Final UX validation: full suite, clippy, diff check, TTY smoke with long project list and help/picker flows.
 
+### Phase 18 — UX/Usability review (2026-08-12, FR-040–FR-049)
+
+- [X] T064 [P] [US1] Make top-level `Esc` show a "Press Q to quit" hint instead of exiting; `Q`/`Ctrl+C` remain the only quit keys (FR-040).
+- [X] T065 [P] [US6] Add scrollable text popups (Help/Diff/Status) with ↑↓/j/k/PgUp/PgDn/Home/End and a scroll hint in the title (FR-041, `popup_inner_height`/`popup_max_scroll` in `app.rs` + `scroll_popup` in `mod.rs`).
+- [X] T066 [P] [US4] Name the affected secret in the Delete confirmation and in the Edit popup title; `Enter` on the New popup key field advances to the value field (FR-042).
+- [X] T067 [P] [US6] Add a confirmation popup before `Y` import with an overwrite warning (FR-043, `Popup::ConfirmImport` + `run_import`).
+- [X] T068 [P] [US5] Guard vault-reading operations (`N`/`E`/`D`/`S`/`T`/`G`/`Y`/`X`) while locked with a single "Vault locked — press U to unlock" message (FR-044, `require_unlocked`).
+- [X] T069 [P] [US4] Distinguish error messages (highlighted) from informational statuses; include the active project in the footer (FR-045, `status_is_error` + `note`/`fail` in `app.rs`, `theme::alert`).
+- [X] T070 [P] [US4] Support bracketed paste in popups and search via crossterm `Event::Paste` with control chars stripped (FR-046).
+- [X] T071 [P] [US4] Keep the search filter visible in the Secrets panel title and let `Enter` close the search line while keeping the filter (FR-047).
+- [X] T072 [P] [US6] Purpose-specific passphrase popup titles (Sync/Diff/Import) and fixed-width passphrase mask (FR-048).
+- [X] T073 [P] [US5] Abort the remaining sync queue when the sync passphrase popup is cancelled (FR-049).
+- [X] T074 [P] [US6] Validation: full suite (216 tests, 215 passed + 1 pre-existing ignore), clippy `--all-targets -D warnings`, TTY smoke of all new flows (Esc hint, help scroll, delete naming, import confirm, paste, locked guard).
+
 ---
 
 ## Dependencies & Execution Order

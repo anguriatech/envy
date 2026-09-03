@@ -62,6 +62,7 @@ cargo audit
 Rust stable (edition 2024, MSRV 1.85): Follow standard conventions
 
 ## Recent Changes
+- 016-interactive-tui (UX review, 2026-08-12): `Esc` no longer exits the TUI (shows quit hint); scrollable Help/Diff/Status popups; delete/edit popups name the secret; `Y` import confirms before overwriting; locked-state guards with clear message; error statuses highlighted red with project shown in footer; bracketed paste in all inputs; search filter visible in panel title; purpose-specific passphrase popups with fixed mask; sync queue aborted on passphrase cancel. No new crates.
 - 016-interactive-tui: Added `ratatui` 0.29, `crossterm` 0.28, and direct `console` 0.15. SQLite via `rusqlite` (bundled-sqlcipher, existing vault, read/write through `core/` only).
 - 014-nested-projects: Added Rust stable (edition 2024, MSRV 1.85) + `clap` (derive), `dialoguer`, `serde_json`, `zeroize`, `thiserror`, `toml` — all already in `Cargo.toml`. No new crate added.
 - 013-encrypt-strict: Added Rust stable (edition 2024, MSRV 1.85) + `clap` (derive), `dialoguer` (Password + MultiSelect), `serde_json`, `zeroize`, `thiserror`, `toml` — all already in `Cargo.toml`. No new crate added.
