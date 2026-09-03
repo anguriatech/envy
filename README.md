@@ -159,6 +159,41 @@ git push
 
 A teammate pulls the repo and runs `envy decrypt`. Done. No Slack messages, no shared spreadsheets, no plaintext ever leaving your encrypted vault.
 
+### Interactive TUI
+
+Run `envy` without a subcommand from an interactive terminal to open the full-screen vault
+browser. It shows projects, environments, and masked secret values without changing the
+output contract of existing commands.
+
+| Key | Action |
+|---|---|
+| `Q` / `Ctrl+C` | Quit and restore terminal |
+| `B` | Toggle full or compact banner |
+| `Tab`, arrows, `Enter` | Navigate project tree, environments, and secrets |
+| `↑` / `↓` | Move through all projects and expanded environments |
+| `Enter` / `→` / `←` | Expand/select tree entry or collapse project |
+| `P` | Search and choose a project |
+| `X` | Delete selected project (exact-name confirmation) |
+| `?` | Open TUI help |
+| `F` | Search secret keys |
+| `Space` | Reveal selected value temporarily |
+| `N` / `E` / `D` | Create, edit, or delete a secret |
+| `L` / `U` | Lock or unlock the vault |
+| `S` | Sync project environments into `envy.enc` |
+| `T` / `G` / `Y` | Status / diff / import from `envy.enc` |
+| `Ctrl+R` | Reveal value while editing a popup |
+
+Values are masked by default and cleared from memory when the vault is locked. Set
+`NO_COLOR=1` for a plain terminal presentation. The TUI never starts for subcommands such
+as `envy run -- command`; when stdout is piped, bare `envy` prints help to stderr and exits
+successfully, keeping scripts and CI safe.
+
+The project tree marks environments with `✓` (in sync), `~` (needs sync), or `·` (never
+sealed). `T` shows stale secrets and rotation status; `G` compares active environment against
+`envy.enc`; `Y` imports the sealed environment back into the vault.
+The footer intentionally shows only primary navigation. Press `?` for complete grouped help;
+long project trees and project-picker results scroll while keeping the current selection visible.
+
 #### Nested projects (monorepo / multi-project support)
 
 Since v0.3.2, `envy init` works in subdirectories of existing envy projects. Each project gets its own UUID in the vault and its own `envy.toml` + `envy.enc`. Commands resolve the closest `envy.toml` automatically — running `envy list` from a child directory shows the child's secrets, not the parent's.

@@ -214,7 +214,8 @@ pub fn write_artifact_atomic(artifact: &SyncArtifact, path: &Path) -> Result<(),
 // ---------------------------------------------------------------------------
 
 /// Reads all secrets for `env_name` from the vault and seals them into one
-/// [`EncryptedEnvelope`] using `passphrase`.
+/// [`EncryptedEnvelope`] using `passphrase`. Sync markers are committed
+/// separately by [`mark_env_sealed`] after the artifact is persisted.
 ///
 /// Used by `cmd_encrypt` to build the per-environment merge map, each env
 /// potentially with its own passphrase (FR-001, FR-002).
@@ -229,6 +230,20 @@ pub fn seal_env(
     env_name: &str,
     passphrase: &str,
 ) -> Result<EncryptedEnvelope, SyncError> {
+    let envelope = seal_env_unmarked(vault, master_key, project_id, env_name, passphrase)?;
+
+    mark_env_sealed(vault, project_id, env_name)?;
+    Ok(envelope)
+}
+
+/// Seals one environment without changing its sync marker.
+pub fn seal_env_unmarked(
+    vault: &Vault,
+    master_key: &[u8; 32],
+    project_id: &ProjectId,
+    env_name: &str,
+    passphrase: &str,
+) -> Result<EncryptedEnvelope, SyncError> {
     if passphrase.trim().is_empty() {
         return Err(SyncError::Artifact(ArtifactError::WeakPassphrase));
     }
@@ -236,8 +251,15 @@ pub fn seal_env(
         .map_err(|e| SyncError::VaultError(e.to_string()))?;
     let secrets: BTreeMap<String, Zeroizing<String>> = secrets_map.into_iter().collect();
     let payload = ArtifactPayload { secrets };
-    let envelope = seal_envelope(passphrase, &payload)?;
+    Ok(seal_envelope(passphrase, &payload)?)
+}
 
+/// Commits the sync marker after its artifact has been persisted successfully.
+pub fn mark_env_sealed(
+    vault: &Vault,
+    project_id: &ProjectId,
+    env_name: &str,
+) -> Result<(), SyncError> {
     // Update the sync marker so `envy status` reports InSync immediately after
     // a successful encrypt (spec FR-008; Constitution Principle: marker is only
     // written if the seal itself succeeds).
@@ -257,7 +279,7 @@ pub fn seal_env(
         .upsert_sync_marker(&env.id, now)
         .map_err(|e| SyncError::VaultError(e.to_string()))?;
 
-    Ok(envelope)
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -281,9 +303,8 @@ pub fn seal_env(
 ///    [`check_envelope_passphrase`]. If it returns `false`, return
 ///    `DecryptionFailed` so the caller can map it to `PassphraseInput`
 ///    (exit 2). The `artifact` is NOT modified at this point.
-/// 4. Re-seal via [`seal_env`] — this re-reads secrets from the vault,
-///    generates a fresh `OsRng` nonce and KDF salt, and writes a fresh
-///    `sync_marker` row.
+/// 4. Re-seal via [`seal_env`] — this re-reads secrets from the vault and
+///    generates a fresh `OsRng` nonce and KDF salt.
 /// 5. Replace `artifact.environments[env_name]` with the new envelope.
 ///
 /// # Errors
@@ -622,6 +643,7 @@ mod tests {
 
         seal_env(&vault, &TEST_KEY, &pid, "development", "test-passphrase")
             .expect("seal_env must succeed");
+        mark_env_sealed(&vault, &pid, "development").expect("marker must succeed");
 
         let statuses = vault.environment_status(&pid).expect("environment_status");
         let dev = statuses

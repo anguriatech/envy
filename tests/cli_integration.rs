@@ -40,6 +40,21 @@ fn envy(args: &[&str], cwd: &std::path::Path) -> Output {
         .expect("failed to spawn envy")
 }
 
+#[test]
+fn bare_invocation_is_help_only_when_stdout_is_piped() {
+    let output = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("failed to spawn bare envy");
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Usage: envy"));
+    assert!(!output.stdout.windows(2).any(|bytes| bytes == [0x1b, b'[']));
+}
+
 // ---------------------------------------------------------------------------
 // T028 — US1: init creates manifest
 // ---------------------------------------------------------------------------

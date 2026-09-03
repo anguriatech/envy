@@ -1,8 +1,9 @@
 # envy Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-06-16 (011-envy-diff complete)
+Auto-generated from all feature plans. Last updated: 2026-08-11 (011-envy-diff complete)
 
 ## Active Technologies
+- Rust stable (edition 2024, MSRV 1.85) + `ratatui` 0.29 (new), `crossterm` 0.28 (new direct), `console` 0.15 (new direct), `zeroize`, `clap` (derive) (016-interactive-tui)
 - GitHub Actions YAML; Rust 1.85 (stable) as toolchain installed in CI + `actions/checkout@v4`, `dtolnay/rust-toolchain@stable`, `shogo82148/actions-setup-perl@v1` (007-ci-smoke-workflows)
 - N/A — workflows are stateless; no persistent state between jobs (007-ci-smoke-workflows)
 - Rust stable (edition 2024, MSRV 1.85) + `clap` (derive API, `ValueEnum`), `serde` + `serde_json` (already present), `thiserror` (008-output-formats)
@@ -61,6 +62,7 @@ cargo audit
 Rust stable (edition 2024, MSRV 1.85): Follow standard conventions
 
 ## Recent Changes
+- 016-interactive-tui: Added `ratatui` 0.29, `crossterm` 0.28, and direct `console` 0.15. SQLite via `rusqlite` (bundled-sqlcipher, existing vault, read/write through `core/` only).
 - 014-nested-projects: Added Rust stable (edition 2024, MSRV 1.85) + `clap` (derive), `dialoguer`, `serde_json`, `zeroize`, `thiserror`, `toml` — all already in `Cargo.toml`. No new crate added.
 - 013-encrypt-strict: Added Rust stable (edition 2024, MSRV 1.85) + `clap` (derive), `dialoguer` (Password + MultiSelect), `serde_json`, `zeroize`, `thiserror`, `toml` — all already in `Cargo.toml`. No new crate added.
 - 012-cli-rotate: Added Rust stable (edition 2024, MSRV 1.85) + `clap` (derive), `dialoguer` (Password + MultiSelect), `serde_json`, `zeroize`, `thiserror` — all already in `Cargo.toml`. No new crate added.
@@ -72,5 +74,5 @@ Rust stable (edition 2024, MSRV 1.85): Follow standard conventions
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at `specs/015-docs-examples-demos/plan.md` (spec: `specs/015-docs-examples-demos/spec.md`).
+at `specs/016-interactive-tui/plan.md` (spec: `specs/016-interactive-tui/spec.md`).
 <!-- SPECKIT END -->

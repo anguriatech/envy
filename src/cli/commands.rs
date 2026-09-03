@@ -843,6 +843,10 @@ pub(super) fn cmd_encrypt(
     // Step 6 — Atomic write (write-to-tmp + rename, FR-006).
     crate::core::write_artifact_atomic(&artifact, artifact_path)
         .map_err(|e| CliError::VaultOpen(e.to_string()))?;
+    for env_name in &sealed_envs {
+        crate::core::mark_env_sealed(vault, project_id, env_name)
+            .map_err(|e| CliError::VaultOpen(e.to_string()))?;
+    }
 
     // Step 7 — Success output (T029: lists only updated envs in this run).
     println!(
@@ -1052,6 +1056,8 @@ pub(super) fn cmd_rotate(
         }
     };
 
+    let mut rotated_envs = Vec::new();
+
     // Step 3 — For each selected env: empty-env guard, resolve passphrases,
     //          verify, rotate, print success.
     for env_name in &selected_envs {
@@ -1103,6 +1109,7 @@ pub(super) fn cmd_rotate(
             ) => CliError::PassphraseInput("new passphrase must not be empty or whitespace".into()),
             other => CliError::VaultOpen(other.to_string()),
         })?;
+        rotated_envs.push(env_name.clone());
 
         // Success line — note: the env name is printed, NOT the passphrase.
         // (Memory hygiene: Zeroizing drops both passphrases at end of scope.)
@@ -1117,6 +1124,10 @@ pub(super) fn cmd_rotate(
     // Step 4 — Atomic write of the updated artifact.
     crate::core::write_artifact_atomic(&artifact, artifact_path)
         .map_err(|e| CliError::VaultOpen(e.to_string()))?;
+    for env_name in &rotated_envs {
+        crate::core::mark_env_sealed(vault, project_id, env_name)
+            .map_err(|e| CliError::VaultOpen(e.to_string()))?;
+    }
 
     Ok(())
 }
