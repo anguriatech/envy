@@ -11,7 +11,72 @@ use std::collections::HashMap;
 
 use zeroize::Zeroizing;
 
-use crate::db::{DbError, ProjectId, Vault};
+/// Non-secret project data exposed to presentation layers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectSummary {
+    pub id: ProjectId,
+    pub name: String,
+}
+
+/// Non-secret environment data exposed to presentation layers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvironmentSummary {
+    pub id: EnvId,
+    pub name: String,
+}
+
+/// Decrypted secret plus non-sensitive update metadata for presentation layers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretValueSummary {
+    pub key: String,
+    pub value: Zeroizing<String>,
+    pub updated_at: i64,
+}
+
+pub fn delete_project(vault: &Vault, project_id: &ProjectId) -> Result<(), CoreError> {
+    vault.delete_project(project_id).map_err(CoreError::Db)
+}
+
+pub fn project_deletion_counts(
+    vault: &Vault,
+    project_id: &ProjectId,
+) -> Result<(usize, usize), CoreError> {
+    let environments = list_environments(vault, project_id)?;
+    let mut secret_count = 0;
+    for environment in &environments {
+        secret_count += list_secret_keys(vault, project_id, &environment.name)?.len();
+    }
+    Ok((environments.len(), secret_count))
+}
+
+/// Lists projects without exposing database-layer types to the CLI.
+pub fn list_projects(vault: &Vault) -> Result<Vec<ProjectSummary>, CoreError> {
+    Ok(vault
+        .list_projects()?
+        .into_iter()
+        .map(|project| ProjectSummary {
+            id: project.id,
+            name: project.name,
+        })
+        .collect())
+}
+
+/// Lists environments for a project without exposing database-layer types.
+pub fn list_environments(
+    vault: &Vault,
+    project_id: &ProjectId,
+) -> Result<Vec<EnvironmentSummary>, CoreError> {
+    Ok(vault
+        .list_environments(project_id)?
+        .into_iter()
+        .map(|environment| EnvironmentSummary {
+            id: environment.id,
+            name: environment.name,
+        })
+        .collect())
+}
+
+use crate::db::{DbError, EnvId, ProjectId, Vault};
 
 use super::CoreError;
 
@@ -194,6 +259,32 @@ pub fn list_secrets_with_values(
         pairs.push((record.key, string));
     }
     Ok(pairs)
+}
+
+/// Decrypts secrets while retaining database update timestamps for UI consumers.
+pub fn list_secrets_with_metadata(
+    vault: &Vault,
+    master_key: &[u8; 32],
+    project_id: &ProjectId,
+    env_name: &str,
+) -> Result<Vec<SecretValueSummary>, CoreError> {
+    let name = normalize_env(env_name);
+    let env = vault.get_environment_by_name(project_id, &name)?;
+    vault
+        .list_secrets(&env.id)?
+        .into_iter()
+        .map(|record| {
+            let plaintext_bytes =
+                crate::crypto::decrypt(master_key, &record.value_encrypted, &record.value_nonce)?;
+            let value = String::from_utf8(plaintext_bytes.to_vec())
+                .map_err(|_| CoreError::Crypto(crate::crypto::CryptoError::DecryptionFailed))?;
+            Ok(SecretValueSummary {
+                key: record.key,
+                value: Zeroizing::new(value),
+                updated_at: record.updated_at,
+            })
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------

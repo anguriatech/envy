@@ -18,7 +18,7 @@ use super::error::CoreError;
 // ---------------------------------------------------------------------------
 
 /// The sync state of a single environment derived from DB timestamps.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncStatus {
     /// All secrets were last modified before (or at the same time as) the last
     /// successful seal. The vault and `envy.enc` are in sync.

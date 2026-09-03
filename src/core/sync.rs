@@ -214,7 +214,8 @@ pub fn write_artifact_atomic(artifact: &SyncArtifact, path: &Path) -> Result<(),
 // ---------------------------------------------------------------------------
 
 /// Reads all secrets for `env_name` from the vault and seals them into one
-/// [`EncryptedEnvelope`] using `passphrase`.
+/// [`EncryptedEnvelope`] using `passphrase`. Sync markers are committed
+/// separately by [`mark_env_sealed`] after the artifact is persisted.
 ///
 /// Used by `cmd_encrypt` to build the per-environment merge map, each env
 /// potentially with its own passphrase (FR-001, FR-002).
@@ -229,6 +230,20 @@ pub fn seal_env(
     env_name: &str,
     passphrase: &str,
 ) -> Result<EncryptedEnvelope, SyncError> {
+    let envelope = seal_env_unmarked(vault, master_key, project_id, env_name, passphrase)?;
+
+    mark_env_sealed(vault, project_id, env_name)?;
+    Ok(envelope)
+}
+
+/// Seals one environment without changing its sync marker.
+pub fn seal_env_unmarked(
+    vault: &Vault,
+    master_key: &[u8; 32],
+    project_id: &ProjectId,
+    env_name: &str,
+    passphrase: &str,
+) -> Result<EncryptedEnvelope, SyncError> {
     if passphrase.trim().is_empty() {
         return Err(SyncError::Artifact(ArtifactError::WeakPassphrase));
     }
@@ -236,13 +251,24 @@ pub fn seal_env(
         .map_err(|e| SyncError::VaultError(e.to_string()))?;
     let secrets: BTreeMap<String, Zeroizing<String>> = secrets_map.into_iter().collect();
     let payload = ArtifactPayload { secrets };
-    let envelope = seal_envelope(passphrase, &payload)?;
+    Ok(seal_envelope(passphrase, &payload)?)
+}
 
+/// Commits the sync marker after its artifact has been persisted successfully.
+pub fn mark_env_sealed(
+    vault: &Vault,
+    project_id: &ProjectId,
+    env_name: &str,
+) -> Result<(), SyncError> {
     // Update the sync marker so `envy status` reports InSync immediately after
     // a successful encrypt (spec FR-008; Constitution Principle: marker is only
     // written if the seal itself succeeds).
+    // Environment rows are stored lowercase (core::normalize_env) — normalize
+    // here too, or a mixed-case caller fails with "record not found" after the
+    // seal itself already succeeded.
+    let name = super::ops::normalize_env(env_name);
     let env = vault
-        .get_environment_by_name(project_id, env_name)
+        .get_environment_by_name(project_id, &name)
         .map_err(|e| SyncError::VaultError(e.to_string()))?;
 
     // SAFETY: `duration_since(UNIX_EPOCH)` can only fail if the system clock is
@@ -257,7 +283,7 @@ pub fn seal_env(
         .upsert_sync_marker(&env.id, now)
         .map_err(|e| SyncError::VaultError(e.to_string()))?;
 
-    Ok(envelope)
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -281,9 +307,8 @@ pub fn seal_env(
 ///    [`check_envelope_passphrase`]. If it returns `false`, return
 ///    `DecryptionFailed` so the caller can map it to `PassphraseInput`
 ///    (exit 2). The `artifact` is NOT modified at this point.
-/// 4. Re-seal via [`seal_env`] — this re-reads secrets from the vault,
-///    generates a fresh `OsRng` nonce and KDF salt, and writes a fresh
-///    `sync_marker` row.
+/// 4. Re-seal via [`seal_env`] — this re-reads secrets from the vault and
+///    generates a fresh `OsRng` nonce and KDF salt.
 /// 5. Replace `artifact.environments[env_name]` with the new envelope.
 ///
 /// # Errors
@@ -309,7 +334,11 @@ pub fn rotate_env(
         return Err(SyncError::Artifact(ArtifactError::WeakPassphrase));
     }
 
-    let existing_envelope = match artifact.environments.get(env_name) {
+    // Artifact keys are lowercase (the seal path inserts normalized names);
+    // reuse core::ops::normalize_env so empty/mixed-case names behave exactly
+    // like the marker path.
+    let env_key = super::ops::normalize_env(env_name);
+    let existing_envelope = match artifact.environments.get(&env_key) {
         Some(e) => e,
         None => {
             return Err(SyncError::Artifact(ArtifactError::MalformedArtifact(
@@ -326,9 +355,7 @@ pub fn rotate_env(
     }
 
     let new_envelope = seal_env(vault, master_key, project_id, env_name, new_passphrase)?;
-    artifact
-        .environments
-        .insert(env_name.to_string(), new_envelope);
+    artifact.environments.insert(env_key, new_envelope);
 
     Ok(())
 }
@@ -622,6 +649,7 @@ mod tests {
 
         seal_env(&vault, &TEST_KEY, &pid, "development", "test-passphrase")
             .expect("seal_env must succeed");
+        mark_env_sealed(&vault, &pid, "development").expect("marker must succeed");
 
         let statuses = vault.environment_status(&pid).expect("environment_status");
         let dev = statuses
@@ -636,6 +664,26 @@ mod tests {
             dev.sealed_at.unwrap() > 0,
             "sealed_at must be a positive Unix timestamp"
         );
+    }
+
+    // FR-059 regression: mixed-case env names must normalize in the marker
+    // path — the raw lookup used to fail with "record not found" AFTER the
+    // seal itself had already succeeded.
+    #[test]
+    fn mark_env_sealed_accepts_mixed_case_name() {
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_KEY, &pid, "Development", "API_KEY", "secret")
+            .expect("set_secret must succeed");
+
+        mark_env_sealed(&vault, &pid, "Development").expect("marker must normalize the name");
+
+        let statuses = vault.environment_status(&pid).expect("environment_status");
+        let dev = statuses
+            .iter()
+            .find(|s| s.name == "development")
+            .expect("development row must exist");
+        assert!(dev.sealed_at.is_some(), "marker must be committed");
     }
 
     // T005 — rotate_env happy path replaces envelope

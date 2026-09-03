@@ -159,6 +159,50 @@ git push
 
 A teammate pulls the repo and runs `envy decrypt`. Done. No Slack messages, no shared spreadsheets, no plaintext ever leaving your encrypted vault.
 
+### Interactive TUI
+
+<div align="center">
+  <img src="docs/assets/tui-demo.gif" alt="Envy TUI demo" width="100%" />
+</div>
+
+Run `envy` without a subcommand from an interactive terminal to open the full-screen vault
+workstation: a three-panel console showing your project tree, the selected environment's
+masked secrets, and an inspector column with sync state and metadata — all without changing
+the output contract of existing commands. Launching from a project directory focuses that
+project's entry in the tree.
+
+| Key | Panel | Action |
+|---|---|---|
+| `↑↓` / `j` `k` | both | Move selection |
+| `Tab` | both | Switch between Projects and Secrets |
+| `Enter` / `→` / `←` | tree | Expand/select or collapse |
+| `Space` | secrets | Reveal selected value (re-masks on move) |
+| `Y` | secrets | Copy value to clipboard (clears 30s after last copy) |
+| `N` / `E` / `D` | secrets | Create, edit, or delete a secret |
+| `F` | secrets | Filter keys (filter persists, shown in the title) |
+| `S` | both | Seal project into `envy.enc` (preview confirmation) |
+| `T` / `G` | tree | Status / diff against `envy.enc` |
+| `Y` | tree | Import environment from `envy.enc` (confirms) |
+| `R` | tree | Rotate environment passphrase in-place |
+| `X` | tree | Delete selected project (exact-name confirmation) |
+| `L` / `U` | both | Lock or unlock the vault |
+| `:` | both | Command palette — every action, searchable |
+| `?` | both | Full help (scrollable) |
+| `Q` / `Ctrl+C` | both | Quit and restore terminal |
+
+The bottom legend always shows the keys of the focused panel, so nothing has to be
+memorized. The inspector column on the right shows sync state (in sync / modified / never
+sealed), secret counts, stale secrets, and the artifact location for whatever is selected;
+it hides automatically on terminals narrower than 100 columns.
+
+Color is functional: brand violet marks the focused panel, green means in sync, amber means
+drift (needs re-seal), red marks errors and destructive confirmations. Set `NO_COLOR=1` for
+a plain presentation. The TUI never starts for subcommands such as `envy run -- command`;
+when stdout is piped, bare `envy` prints help to stderr and exits successfully, keeping
+scripts and CI safe.
+The footer intentionally shows only primary navigation. Press `?` for complete grouped help;
+long project trees and project-picker results scroll while keeping the current selection visible.
+
 #### Nested projects (monorepo / multi-project support)
 
 Since v0.3.2, `envy init` works in subdirectories of existing envy projects. Each project gets its own UUID in the vault and its own `envy.toml` + `envy.enc`. Commands resolve the closest `envy.toml` automatically — running `envy list` from a child directory shows the child's secrets, not the parent's.
@@ -519,7 +563,7 @@ This is purely informational — a low score never blocks or rejects a passphras
 - [Per-command reference](docs/commands/) — one page per command: what it does, syntax, exit codes, and related commands
 - [Examples](examples/) — copy-pasteable, CI-verified workflows (basic, team-sync, CI/CD, monorepo)
 - [Developer guide](docs/developer-guide.md) — architecture, module map, and contribution notes
-- [Demo videos](docs/assets/) — terminal walkthroughs of quickstart, team sync, and CI/CD (generated in CI)
+- [Demo videos](docs/assets/) — terminal walkthroughs of quickstart, team sync, CI/CD, and the interactive TUI (generated with VHS)
 
 ---
 

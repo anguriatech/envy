@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "environments": {
+    "development": {
+      "ciphertext": "93fWVOpAGXC4Nql9aKwXxeBSu6nJlRGO6s6goG9+kZr9",
+      "nonce": "L66DMvv0kankhwTw",
+      "kdf": {
+        "algorithm": "argon2id",
+        "memory_kib": 65536,
+        "time_cost": 3,
+        "parallelism": 4,
+        "salt": "Ux0+SA3zMfblTX0zWCPWFQ=="
+      }
+    },
+    "staging": {
+      "ciphertext": "FnBmE1ReY2Q708hbrQDg5mImxHGSFvFsBIQdCEYeP+DrIxS4W1UWESQgT611gZSjnrA2fuL4PtsOXMZo+AoCf0IT0KEwIknPyPSr3Ve+5K72MLr9OMqWSkPoVvNhb6o+g8D1sjcQXnZP",
+      "nonce": "Od1R7AOaQKJxUiKB",
+      "kdf": {
+        "algorithm": "argon2id",
+        "memory_kib": 65536,
+        "time_cost": 3,
+        "parallelism": 4,
+        "salt": "YH5zlu3d5R4NzsaL4Pr4LA=="
+      }
+    }
+  }
+}

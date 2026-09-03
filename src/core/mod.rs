@@ -19,13 +19,14 @@ pub use diff::{ChangeType, DiffEntry, DiffReport, compute_diff};
 pub use error::CoreError;
 pub use manifest::{Manifest, create_manifest, find_manifest};
 pub use ops::{
-    DEFAULT_ENV, delete_secret, get_env_secrets, get_secret, list_secret_keys,
-    list_secrets_with_values, set_secret,
+    DEFAULT_ENV, EnvironmentSummary, ProjectSummary, SecretValueSummary, delete_project,
+    delete_secret, get_env_secrets, get_secret, list_environments, list_projects, list_secret_keys,
+    list_secrets_with_metadata, list_secrets_with_values, project_deletion_counts, set_secret,
 };
 pub use scan::{ScanMatch, scan_for_leaks};
 pub use status::{StatusRow, SyncStatus, derive_sync_status, get_status_report};
 pub use sync::{
-    SyncError, UnsealResult, check_envelope_passphrase, new_empty_artifact, read_artifact,
-    rotate_env, seal_artifact, seal_env, unseal_artifact, unseal_env, write_artifact,
-    write_artifact_atomic,
+    SyncError, UnsealResult, check_envelope_passphrase, mark_env_sealed, new_empty_artifact,
+    read_artifact, rotate_env, seal_artifact, seal_env, seal_env_unmarked, unseal_artifact,
+    unseal_env, write_artifact, write_artifact_atomic,
 };

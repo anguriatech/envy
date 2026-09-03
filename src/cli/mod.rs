@@ -13,6 +13,7 @@
 mod commands;
 mod error;
 pub mod format;
+mod tui;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use format::OutputFormat;
@@ -33,7 +34,7 @@ pub use error::{CliError, cli_exit_code, core_exit_code, format_cli_error, forma
 #[command(name = "envy", version, about, long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 
     /// Output format for read commands (default: table).
     #[arg(long, short = 'f', global = true, default_value = "table")]
@@ -347,9 +348,37 @@ pub fn run() -> i32 {
 
     let cli = Cli::parse();
 
+    if cli.command.is_none() {
+        use std::io::IsTerminal;
+
+        if std::io::stdout().is_terminal() {
+            return match tui::run() {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("{}", format_cli_error(&error));
+                    cli_exit_code(&error)
+                }
+            };
+        }
+
+        let mut command = Cli::command();
+        return match command.write_long_help(&mut std::io::stderr()) {
+            Ok(()) => {
+                eprintln!();
+                0
+            }
+            Err(error) => {
+                eprintln!("error: cannot write help: {error}");
+                1
+            }
+        };
+    }
+
+    let command = cli.command.as_ref().expect("checked above");
+
     // --- Completions: no vault or manifest needed. ---
-    if let Commands::Completions { shell } = cli.command {
-        clap_complete::generate(shell, &mut Cli::command(), "envy", &mut std::io::stdout());
+    if let Commands::Completions { shell } = command {
+        clap_complete::generate(*shell, &mut Cli::command(), "envy", &mut std::io::stdout());
         return 0;
     }
 
@@ -362,7 +391,7 @@ pub fn run() -> i32 {
     }
 
     // --- Init is special: it manages its own vault lifecycle. ---
-    if let Commands::Init = &cli.command {
+    if let Some(Commands::Init) = &cli.command {
         return match commands::cmd_init() {
             Ok(()) => 0,
             Err(e) => {
@@ -392,7 +421,7 @@ pub fn run() -> i32 {
 
     // --- Hooks: only needs the project root (manifest_path) — installing a
     // git hook never requires the master key or an open vault. ---
-    if let Commands::Hooks { action } = cli.command {
+    if let Some(Commands::Hooks { action }) = cli.command {
         return match action {
             HooksAction::Install { force } => {
                 match commands::cmd_hooks_install(&manifest_path, force) {
@@ -437,7 +466,7 @@ pub fn run() -> i32 {
         return 4;
     }
 
-    match cli.command {
+    match cli.command.expect("command validated before vault setup") {
         Commands::Init => unreachable!("Init is handled above"),
 
         Commands::Set {
