@@ -170,7 +170,7 @@ A new user or contributor finds an "Interactive TUI" section in the README expla
 - **FR-031**: Each visible environment MUST show sync state (`InSync`, modified/needs refresh, or never sealed) and the active environment MUST be visually distinct.
 - **FR-032**: `T` MUST show a status report for the active project, including secret counts, seal state, and stale-secret/refresh information.
 - **FR-033**: `G` MUST show a key-level diff for the active environment between vault and `envy.enc`, without revealing secret values by default.
-- **FR-034**: `Y` MUST unseal/import the active environment from `envy.enc` into the vault using the same passphrase resolution and masked popup rules as sync.
+- **FR-034**: `Y` MUST unseal/import the active environment from `envy.enc` into the vault using the same passphrase resolution and masked popup rules as sync. *(Amended 2026-09-03 by FR-057: `Y` is panel-scoped — import in the project tree, copy-value in the secrets panel; import also remains reachable via the command palette.)*
 - **FR-035**: Secret timestamps MUST be human-readable in the table; raw Unix timestamps MUST NOT be shown to users.
 - **FR-036**: The project tree and project picker MUST use stateful scrolling so the highlighted entry remains visible in arbitrarily long lists.
 - **FR-037**: Selecting a project MUST preserve the tree cursor on that project; loading its environments MUST NOT reset navigation to the first row.
@@ -186,6 +186,16 @@ A new user or contributor finds an "Interactive TUI" section in the README expla
 - **FR-047**: The secret search filter MUST remain visible in the Secrets panel title while active (even after the search line is closed with `Enter`); `Esc` closes the search line and `Enter` keeps the filter applied.
 - **FR-048**: The passphrase popup title MUST reflect its purpose (Sync / Diff / Import) and the passphrase field MUST render a fixed-width mask that does not reveal the passphrase length.
 - **FR-049**: Cancelling the sync passphrase popup MUST abort the remaining environment sync queue.
+- **FR-050**: The TUI MUST render a three-panel console layout — project tree, secrets table, and a Details inspector column — with the inspector hidden on terminals narrower than 100 columns.
+- **FR-051**: The Details inspector MUST show, for the current selection: project sync summary (in sync / modified / never sealed counts), environment sync state and secret count, or secret key/value/update metadata, plus the artifact location and the actions available on the selection.
+- **FR-052**: The bottom edge MUST show two rows: a status row (lock state, active project/environment, latest message, working indicator) and a contextual key legend declaring the keys of the focused panel, so nothing has to be memorized; `?` remains the full-help overlay.
+- **FR-053**: `:` MUST open a searchable command palette listing every TUI action (fuzzy substring match over action labels); every operation MUST be reachable through the palette without memorizing hotkeys.
+- **FR-054**: `S` MUST open a seal-preview confirmation naming the project and every environment that will be written with its secret count, before any passphrase is requested; empty environments MUST be excluded.
+- **FR-055**: `R` MUST run the full passphrase rotation in-TUI (current → new → confirm, masked with Ctrl+R reveal), reusing `core::rotate_env`; the new passphrase MUST differ from the current one and the current one MUST verify before the artifact changes.
+- **FR-056**: A seal passphrase mismatch MUST NOT dead-end: the error MUST direct the user to `R` (rotate) or `Y` (import) and both MUST resolve the situation from inside the TUI.
+- **FR-057**: `Y` MUST be panel-scoped: in the secrets panel it copies the selected value to the system clipboard WITHOUT rendering it in clear, clearing the clipboard 30 seconds after the most recent copy; in the project tree it imports from `envy.enc`. Copy failures surface as status-bar errors.
+- **FR-058**: Color MUST be functional and semantic: brand violet marks focus/identity only, green marks in-sync, amber marks drift, red marks errors and destructive confirmations, dim gray marks metadata. `NO_COLOR` MUST still render a fully usable UI.
+- **FR-059**: Environment lookups for sync/rotate/mark MUST normalize names (lowercase) against the vault and artifact keys so mixed-case input cannot produce "record not found" or false passphrase mismatches.
 
 ### Key Entities *(include if feature involves data)*
 

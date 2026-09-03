@@ -248,6 +248,22 @@
 - [X] T073 [P] [US5] Abort the remaining sync queue when the sync passphrase popup is cancelled (FR-049).
 - [X] T074 [P] [US6] Validation: full suite (216 tests, 215 passed + 1 pre-existing ignore), clippy `--all-targets -D warnings`, TTY smoke of all new flows (Esc hint, help scroll, delete naming, import confirm, paste, locked guard).
 
+### Phase 19 — TUI workstation redesign (2026-09-03, FR-050–FR-059)
+
+- [X] T075 [US1] Write PRODUCT.md (product truth, Operate mode, brand commitments) and record the direction contract in `ui.rs` header (impeccable shape flow, seed f463bcff).
+- [X] T076 [P] [US3] Triptych layout: tree | secrets | Details inspector column, inspector hidden under 100 cols (FR-050).
+- [X] T077 [P] [US3] Inspector content: project sync summary, environment state/counts, secret metadata, artifact location, per-selection actions (FR-051).
+- [X] T078 [P] [US3] Two-row bottom edge: status row + contextual per-panel key legend (FR-052).
+- [X] T079 [P] [US4] Command palette on `:` with searchable action table executed through the same handlers as hotkeys (FR-053).
+- [X] T080 [P] [US5] Seal-preview confirmation listing environments + secret counts before any passphrase prompt; empty envs excluded (FR-054).
+- [X] T081 [P] [US5] In-TUI rotation flow `R` (current → new → confirm, masked, Ctrl+R reveal) via `core::rotate_env` + `ops::rotate_environment` (FR-055).
+- [X] T082 [P] [US5] Seal mismatch recovery: `SealError::Mismatch` surfaces "press R to rotate or Y to import" instead of the `envy rotate` dead-end (FR-056).
+- [X] T083 [P] [US4] Panel-scoped `Y`: clipboard copy in secrets (arboard worker thread, clear 30s after last copy), import in tree (FR-057).
+- [X] T084 [P] [US6] Functional color semantics: violet focus, green in-sync, amber drift, red errors/destructive, dim metadata; NO_COLOR honored (FR-058).
+- [X] T085 [P] [US6] Normalize environment names in `mark_env_sealed` and `rotate_env` artifact lookups (FR-059; fixes "record not found" on mixed-case names).
+- [X] T086 [US7] Docs: README TUI section rewrite, hotkey contract table, quickstart checklist (20 steps), data-model (palette/inspector/clipboard), AGENTS.md.
+- [X] T087 Validation: full suite (220 tests), clippy `--all-targets -D warnings`, fmt, pty smoke of palette/seal-preview/rotate/copy/legend flows.
+
 ---
 
 ## Dependencies & Execution Order

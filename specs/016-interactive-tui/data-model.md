@@ -43,11 +43,23 @@ Unlocked ⇄ Locked
 - **Rules**: live filter on secret keys, case-insensitive substring (FR-010); empty query = full table; zero matches renders "no matches" state.
 
 ### PopupState (editor)
-- **Variants**: `NewSecret`, `EditSecret(SecretEntry)`, `DeleteConfirm(SecretEntry)`, `Passphrase(env: String)`, `ConfirmImport(env: String)` (FR-043).
+- **Variants**: `NewSecret`, `EditSecret(SecretEntry)`, `DeleteConfirm(SecretEntry)`, `Passphrase(env: String)`, `ConfirmImport(env: String)` (FR-043), `ConfirmSeal(project, [(env, count)])` (FR-054), `Rotate(env, stage: Current | New | Confirm, buffers)` (FR-055).
 - **Project actions**: `ProjectPicker(query: String)`, `DeleteProject(name: String, confirmation: String, counts)` and `Help { scroll }` are non-secret UI popups.
 - **Read-only operational popups**: `Status(text, scroll)`, `Diff(text, scroll)` and passphrase-scoped decrypt/import actions expose no secret values by default; long text popups scroll with ↑↓/j/k (FR-041).
 - **Fields**: `key_input: String`, `value_input: Zeroizing<String>`, `revealed: bool` (Ctrl+R toggle, FR-012 amendment).
 - **Rules**: input is masked by default; Enter confirms, Esc cancels; popup open → global hotkeys `L`/`S`/`Q` are ignored (edge case: "Lock while a popup is open"); paste works in every text field (FR-046); cancelling the sync passphrase popup aborts the remaining queue (FR-049).
+
+### CommandPalette (FR-053)
+- **Fields**: `query: String`, `index: usize`; actions are a static table of `{id, label}` matched by case-insensitive substring.
+- **Rules**: `:` opens/closes; Enter executes the selected action through the same handler as its hotkey; the palette is not a `Popup` so popups can stay open underneath is false — palette and popups are mutually exclusive modes.
+
+### Inspector (FR-050/FR-051)
+- **Fields**: `artifact_path: String` (compact display label, non-secret).
+- **Rules**: mirrors the focused panel's selection; read-only; hidden under 100 columns.
+
+### Clipboard (FR-057)
+- **Fields**: one worker thread owning a single `arboard::Clipboard`; commands over an mpsc channel with a per-copy reply.
+- **Rules**: copy never renders the value in clear; clipboard is cleared 30s after the most recent copy; failures surface as status-bar errors, never fatal.
 
 ### SyncState
 - **Fields**: `phase: Idle | ResolvingPassphrase(env) | Working | Done(Ok | Err(String))`.

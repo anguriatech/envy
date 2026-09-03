@@ -81,9 +81,36 @@ pub fn alert() -> Color {
     }
 }
 
-/// Color used to mark the focused panel title.
+/// Color used to mark the focused panel title and borders (brand violet).
 pub fn focus() -> Color {
     color(STOPS[1])
+}
+
+/// Color used for healthy/in-sync state.
+pub fn ok() -> Color {
+    if std::env::var_os("NO_COLOR").is_some() || !console::colors_enabled() {
+        Color::Reset
+    } else {
+        Color::Green
+    }
+}
+
+/// Color used for drift (needs sync) state.
+pub fn drift() -> Color {
+    if std::env::var_os("NO_COLOR").is_some() || !console::colors_enabled() {
+        Color::Reset
+    } else {
+        Color::Yellow
+    }
+}
+
+/// Color used for secondary metadata (labels, hints, legends).
+pub fn dim() -> Color {
+    if std::env::var_os("NO_COLOR").is_some() || !console::colors_enabled() {
+        Color::Reset
+    } else {
+        Color::DarkGray
+    }
 }
 
 #[cfg(test)]

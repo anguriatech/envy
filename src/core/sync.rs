@@ -263,8 +263,12 @@ pub fn mark_env_sealed(
     // Update the sync marker so `envy status` reports InSync immediately after
     // a successful encrypt (spec FR-008; Constitution Principle: marker is only
     // written if the seal itself succeeds).
+    // Environment rows are stored lowercase (core::normalize_env) — normalize
+    // here too, or a mixed-case caller fails with "record not found" after the
+    // seal itself already succeeded.
+    let name = super::ops::normalize_env(env_name);
     let env = vault
-        .get_environment_by_name(project_id, env_name)
+        .get_environment_by_name(project_id, &name)
         .map_err(|e| SyncError::VaultError(e.to_string()))?;
 
     // SAFETY: `duration_since(UNIX_EPOCH)` can only fail if the system clock is
@@ -330,7 +334,11 @@ pub fn rotate_env(
         return Err(SyncError::Artifact(ArtifactError::WeakPassphrase));
     }
 
-    let existing_envelope = match artifact.environments.get(env_name) {
+    // Artifact keys are lowercase (the seal path inserts normalized names);
+    // reuse core::ops::normalize_env so empty/mixed-case names behave exactly
+    // like the marker path.
+    let env_key = super::ops::normalize_env(env_name);
+    let existing_envelope = match artifact.environments.get(&env_key) {
         Some(e) => e,
         None => {
             return Err(SyncError::Artifact(ArtifactError::MalformedArtifact(
@@ -347,9 +355,7 @@ pub fn rotate_env(
     }
 
     let new_envelope = seal_env(vault, master_key, project_id, env_name, new_passphrase)?;
-    artifact
-        .environments
-        .insert(env_name.to_string(), new_envelope);
+    artifact.environments.insert(env_key, new_envelope);
 
     Ok(())
 }
@@ -658,6 +664,26 @@ mod tests {
             dev.sealed_at.unwrap() > 0,
             "sealed_at must be a positive Unix timestamp"
         );
+    }
+
+    // FR-059 regression: mixed-case env names must normalize in the marker
+    // path — the raw lookup used to fail with "record not found" AFTER the
+    // seal itself had already succeeded.
+    #[test]
+    fn mark_env_sealed_accepts_mixed_case_name() {
+        let tmp = tempfile::tempdir().expect("tempdir must succeed");
+        let (vault, pid) = open_test_vault(&tmp);
+        crate::core::set_secret(&vault, &TEST_KEY, &pid, "Development", "API_KEY", "secret")
+            .expect("set_secret must succeed");
+
+        mark_env_sealed(&vault, &pid, "Development").expect("marker must normalize the name");
+
+        let statuses = vault.environment_status(&pid).expect("environment_status");
+        let dev = statuses
+            .iter()
+            .find(|s| s.name == "development")
+            .expect("development row must exist");
+        assert!(dev.sealed_at.is_some(), "marker must be committed");
     }
 
     // T005 — rotate_env happy path replaces envelope

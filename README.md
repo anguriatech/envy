@@ -162,38 +162,39 @@ A teammate pulls the repo and runs `envy decrypt`. Done. No Slack messages, no s
 ### Interactive TUI
 
 Run `envy` without a subcommand from an interactive terminal to open the full-screen vault
-browser. It shows projects, environments, and masked secret values without changing the
-output contract of existing commands.
+workstation: a three-panel console showing your project tree, the selected environment's
+masked secrets, and an inspector column with sync state and metadata — all without changing
+the output contract of existing commands.
 
-| Key | Action |
-|---|---|
-| `Q` / `Ctrl+C` | Quit and restore terminal |
-| `Esc` | Close popup/search, or show quit hint (never quits by itself) |
-| `B` | Toggle full or compact banner |
-| `Tab`, arrows, `Enter` | Navigate project tree, environments, and secrets |
-| `↑` / `↓` | Move through all projects and expanded environments |
-| `Enter` / `→` / `←` | Expand/select tree entry or collapse project |
-| `P` | Search and choose a project |
-| `X` | Delete selected project (exact-name confirmation) |
-| `?` | Open TUI help (scrollable with `↑`/`↓`/`j`/`k`) |
-| `F` | Search secret keys (filter persists after closing) |
-| `Space` | Reveal selected value temporarily |
-| `N` / `E` / `D` | Create, edit, or delete a secret (delete shows the key name) |
-| `L` / `U` | Lock or unlock the vault |
-| `S` | Sync project environments into `envy.enc` |
-| `T` / `G` / `Y` | Status / diff / import from `envy.enc` (import asks confirmation) |
-| `Ctrl+R` | Reveal value while editing a popup |
+| Key | Panel | Action |
+|---|---|---|
+| `↑↓` / `j` `k` | both | Move selection |
+| `Tab` | both | Switch between Projects and Secrets |
+| `Enter` / `→` / `←` | tree | Expand/select or collapse |
+| `Space` | secrets | Reveal selected value (re-masks on move) |
+| `Y` | secrets | Copy value to clipboard (clears 30s after last copy) |
+| `N` / `E` / `D` | secrets | Create, edit, or delete a secret |
+| `F` | secrets | Filter keys (filter persists, shown in the title) |
+| `S` | both | Seal project into `envy.enc` (preview confirmation) |
+| `T` / `G` | tree | Status / diff against `envy.enc` |
+| `Y` | tree | Import environment from `envy.enc` (confirms) |
+| `R` | tree | Rotate environment passphrase in-place |
+| `X` | tree | Delete selected project (exact-name confirmation) |
+| `L` / `U` | both | Lock or unlock the vault |
+| `:` | both | Command palette — every action, searchable |
+| `?` | both | Full help (scrollable) |
+| `Q` / `Ctrl+C` | both | Quit and restore terminal |
 
-Values are masked by default and cleared from memory when the vault is locked. Set
-`NO_COLOR=1` for a plain terminal presentation. The TUI never starts for subcommands such
-as `envy run -- command`; when stdout is piped, bare `envy` prints help to stderr and exits
-successfully, keeping scripts and CI safe.
+The bottom legend always shows the keys of the focused panel, so nothing has to be
+memorized. The inspector column on the right shows sync state (in sync / modified / never
+sealed), secret counts, stale secrets, and the artifact location for whatever is selected;
+it hides automatically on terminals narrower than 100 columns.
 
-The project tree marks environments with `✓` (in sync), `~` (needs sync), or `·` (never
-sealed). `T` shows stale secrets and rotation status; `G` compares active environment against
-`envy.enc`; `Y` imports the sealed environment back into the vault (after confirmation).
-Pasting (`Ctrl+Shift+V` or middle-click) works inside every text field, including masked
-passphrase prompts.
+Color is functional: brand violet marks the focused panel, green means in sync, amber means
+drift (needs re-seal), red marks errors and destructive confirmations. Set `NO_COLOR=1` for
+a plain presentation. The TUI never starts for subcommands such as `envy run -- command`;
+when stdout is piped, bare `envy` prints help to stderr and exits successfully, keeping
+scripts and CI safe.
 The footer intentionally shows only primary navigation. Press `?` for complete grouped help;
 long project trees and project-picker results scroll while keeping the current selection visible.
 

@@ -54,6 +54,19 @@ pub enum Popup {
     ConfirmImport {
         environment: String,
     },
+    ConfirmSeal {
+        project: String,
+        environments: Vec<(String, usize)>,
+        scroll: usize,
+    },
+    Rotate {
+        environment: String,
+        stage: RotateStage,
+        current: Zeroizing<String>,
+        new_pass: Zeroizing<String>,
+        confirm: Zeroizing<String>,
+        revealed: bool,
+    },
     ProjectPicker {
         query: String,
         index: usize,
@@ -83,6 +96,97 @@ pub enum PassphrasePurpose {
     Decrypt,
 }
 
+/// Input stage of the guided rotate flow (current → new → confirm → execute).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RotateStage {
+    Current,
+    New,
+    Confirm,
+}
+
+/// A command the palette can execute. `label` is what the user matches against.
+pub struct PaletteAction {
+    pub id: &'static str,
+    pub label: &'static str,
+}
+
+pub const PALETTE_ACTIONS: [PaletteAction; 16] = [
+    PaletteAction {
+        id: "new",
+        label: "New secret",
+    },
+    PaletteAction {
+        id: "edit",
+        label: "Edit secret",
+    },
+    PaletteAction {
+        id: "delete",
+        label: "Delete secret",
+    },
+    PaletteAction {
+        id: "seal",
+        label: "Seal project to envy.enc",
+    },
+    PaletteAction {
+        id: "rotate",
+        label: "Rotate environment passphrase",
+    },
+    PaletteAction {
+        id: "import",
+        label: "Import environment from envy.enc",
+    },
+    PaletteAction {
+        id: "diff",
+        label: "Diff environment against envy.enc",
+    },
+    PaletteAction {
+        id: "status",
+        label: "Project status",
+    },
+    PaletteAction {
+        id: "lock",
+        label: "Lock vault",
+    },
+    PaletteAction {
+        id: "unlock",
+        label: "Unlock vault",
+    },
+    PaletteAction {
+        id: "delete-project",
+        label: "Delete project",
+    },
+    PaletteAction {
+        id: "filter",
+        label: "Filter secrets",
+    },
+    PaletteAction {
+        id: "picker",
+        label: "Switch project",
+    },
+    PaletteAction {
+        id: "banner",
+        label: "Toggle banner",
+    },
+    PaletteAction {
+        id: "help",
+        label: "Help",
+    },
+    PaletteAction {
+        id: "quit",
+        label: "Quit",
+    },
+];
+
+/// Palette entries matching `query` (case-insensitive substring on the label).
+pub fn palette_matches(query: &str) -> Vec<&'static str> {
+    let query = query.to_ascii_lowercase();
+    PALETTE_ACTIONS
+        .iter()
+        .filter(|action| query.is_empty() || action.label.to_ascii_lowercase().contains(&query))
+        .map(|action| action.id)
+        .collect()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VaultState {
     Locked,
@@ -108,12 +212,17 @@ pub struct App {
     pub focus: Focus,
     pub search: String,
     pub search_active: bool,
+    pub command_mode: bool,
+    pub command_query: String,
+    pub palette_index: usize,
     pub compact_banner: bool,
     pub vault_state: VaultState,
     pub popup: Option<Popup>,
     pub status: String,
     pub status_is_error: bool,
     pub working: bool,
+    /// Compact display form of the envy.enc location (never a secret).
+    pub artifact_path: String,
 }
 
 impl App {
@@ -131,13 +240,22 @@ impl App {
             focus: Focus::Sidebar,
             search: String::new(),
             search_active: false,
+            command_mode: false,
+            command_query: String::new(),
+            palette_index: 0,
             compact_banner: true,
             vault_state: VaultState::Unlocked,
             popup: None,
             status: String::from("Ready — press ? for help"),
             status_is_error: false,
             working: false,
+            artifact_path: String::new(),
         }
+    }
+
+    /// Compact envy.enc label for the inspector: `<parent-dir>/envy.enc`.
+    pub fn artifact_context(&self) -> &str {
+        &self.artifact_path
     }
 
     /// Record an informational status message (rendered normally).
@@ -523,5 +641,13 @@ mod tests {
         assert_eq!(popup_inner_height(50), 20);
         assert_eq!(popup_max_scroll(3), 0);
         assert_eq!(popup_max_scroll(30), 10);
+    }
+
+    #[test]
+    fn palette_matches_filter_by_label_substring() {
+        assert!(palette_matches("").len() == PALETTE_ACTIONS.len());
+        assert_eq!(palette_matches("seal"), vec!["seal"]);
+        assert!(palette_matches("SECRET").contains(&"new"));
+        assert!(palette_matches("nonexistent-action").is_empty());
     }
 }

@@ -1,5 +1,6 @@
 mod app;
 mod banner;
+mod clipboard;
 mod ops;
 mod theme;
 mod ui;
@@ -7,7 +8,8 @@ mod widgets;
 
 use crate::{cli::CliError, db::ProjectId};
 use app::{
-    App, Focus, Input, PassphrasePurpose, Popup, SidebarEntry, VaultState, popup_max_scroll,
+    App, Focus, Input, PassphrasePurpose, Popup, RotateStage, SidebarEntry, VaultState,
+    palette_matches, popup_max_scroll,
 };
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::ExecutableCommand;
@@ -30,6 +32,8 @@ struct Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        // The 30s clipboard window cannot survive process exit — clear now.
+        clipboard::clear_now();
         close_vault(&mut self.vault);
         let _ = std::io::stdout().execute(DisableBracketedPaste);
         ratatui::restore();
@@ -48,6 +52,13 @@ pub(super) fn run() -> Result<(), CliError> {
     let project_ids = projects.iter().map(|project| project.id.clone()).collect();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let (artifact_path, rotation_reminder_days) = manifest_context(&cwd)?;
+    let artifact_label = artifact_path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .map(|name| format!("{}/envy.enc", name.to_string_lossy()))
+        .unwrap_or_else(|| "envy.enc".into());
+    let mut app = App::new(projects);
+    app.artifact_path = artifact_label;
     let mut session = Session {
         terminal: ratatui::init(),
         vault: Some(vault),
@@ -56,7 +67,7 @@ pub(super) fn run() -> Result<(), CliError> {
         artifact_path,
         sync_queue: Vec::new(),
         rotation_reminder_days,
-        app: App::new(projects),
+        app,
     };
     let _ = std::io::stdout().execute(EnableBracketedPaste);
     session.app.expanded = true;
@@ -201,6 +212,9 @@ impl Session {
         if self.app.popup.is_some() {
             return self.handle_popup(code, modifiers);
         }
+        if self.app.command_mode {
+            return self.handle_command(code);
+        }
         if self.app.search_active {
             match code {
                 KeyCode::Esc => {
@@ -221,6 +235,10 @@ impl Session {
         }
         if code == KeyCode::Esc {
             self.app.note("Press Q to quit");
+            return Ok(false);
+        }
+        if code == KeyCode::Char(':') {
+            self.open_command_palette();
             return Ok(false);
         }
         let input = match code {
@@ -255,125 +273,292 @@ impl Session {
         }
 
         if input == Input::Character('l') || input == Input::Character('L') {
-            if let Some(vault) = self.vault.take() {
-                let _ = vault.close();
-            }
-            self.key = None;
-            self.sync_queue.clear();
-            self.app.lock();
-            self.app.note("Vault locked — press U to unlock");
+            self.action_lock();
             return Ok(false);
         }
         if input == Input::Character('u') || input == Input::Character('U') {
-            match ops::open_vault() {
-                Ok((vault, key)) => {
-                    self.vault = Some(vault);
-                    self.key = Some(key);
-                    self.app.vault_state = VaultState::Unlocked;
-                    if let Err(error) = self.load_active_project() {
-                        self.app.fail(error.to_string());
-                        self.app.lock();
-                        self.key = None;
-                        if let Some(vault) = self.vault.take() {
-                            let _ = vault.close();
-                        }
-                    } else {
-                        self.app.note("Vault unlocked");
-                    }
-                }
-                Err(error) => {
-                    self.app.vault_state = VaultState::Locked;
-                    self.app.fail(error.to_string());
-                }
-            }
+            self.action_unlock()?;
             return Ok(false);
         }
         if input == Input::Character('n') || input == Input::Character('N') {
-            if !self.require_unlocked() {
-                return Ok(false);
-            }
-            if self.project_ids.is_empty() || self.app.active_environment().is_none() {
-                self.app.fail("Select an environment first");
-                return Ok(false);
-            }
-            self.app.popup = Some(Popup::New {
-                key: String::new(),
-                value: zeroize::Zeroizing::new(String::new()),
-                editing_value: false,
-                revealed: false,
-            });
+            self.action_new_secret();
             return Ok(false);
         }
         if input == Input::Character('e') || input == Input::Character('E') {
-            if !self.require_unlocked() {
-                return Ok(false);
-            }
-            if let Some(index) = self.app.current_secret_index() {
-                self.app.popup = Some(Popup::Edit {
-                    index,
-                    value: self.app.secrets[index].value.clone(),
-                    revealed: false,
-                });
-            } else {
-                self.app.fail("Select a secret first");
-            }
+            self.action_edit_secret();
             return Ok(false);
         }
         if input == Input::Character('d') || input == Input::Character('D') {
-            if !self.require_unlocked() {
-                return Ok(false);
-            }
-            if let Some(index) = self.app.current_secret_index() {
-                self.app.popup = Some(Popup::Delete { index });
-            } else {
-                self.app.fail("Select a secret first");
-            }
+            self.action_delete_secret();
             return Ok(false);
         }
         if input == Input::Character('x') || input == Input::Character('X') {
-            if !self.require_unlocked() {
-                return Ok(false);
-            }
-            self.open_project_delete()?;
+            self.action_delete_project()?;
             return Ok(false);
         }
         if input == Input::Character('p') || input == Input::Character('P') {
-            self.app.popup = Some(Popup::ProjectPicker {
-                query: String::new(),
-                index: self.app.active_project,
-            });
+            self.action_switch_project();
             return Ok(false);
         }
         if input == Input::Character('?') {
-            self.app.popup = Some(Popup::Help { scroll: 0 });
+            self.action_help();
             return Ok(false);
         }
         if input == Input::Character('s') || input == Input::Character('S') {
-            self.begin_sync()?;
+            self.action_seal()?;
+            return Ok(false);
+        }
+        if input == Input::Character('r') || input == Input::Character('R') {
+            self.action_rotate()?;
             return Ok(false);
         }
         if input == Input::Character('t') || input == Input::Character('T') {
-            if !self.require_unlocked() {
-                return Ok(false);
-            }
-            self.show_status()?;
+            self.action_status()?;
             return Ok(false);
         }
         if input == Input::Character('g') || input == Input::Character('G') {
-            if !self.require_unlocked() {
-                return Ok(false);
-            }
-            self.show_diff()?;
+            self.action_diff()?;
             return Ok(false);
         }
+        // Panel-scoped Y: copy the secret value from the secrets panel, import
+        // from the project tree.
         if input == Input::Character('y') || input == Input::Character('Y') {
-            if !self.require_unlocked() {
-                return Ok(false);
+            if self.app.focus == Focus::Secrets {
+                self.action_copy_secret();
+            } else {
+                self.action_import()?;
             }
-            self.confirm_import()?;
             return Ok(false);
         }
         Ok(self.app.handle_input(input))
+    }
+
+    fn open_command_palette(&mut self) {
+        self.app.command_mode = true;
+        self.app.command_query.clear();
+        self.app.palette_index = 0;
+    }
+
+    /// Handles keys while the command palette is open.
+    fn handle_command(&mut self, code: KeyCode) -> Result<bool, CliError> {
+        match code {
+            KeyCode::Esc => {
+                self.app.command_mode = false;
+            }
+            KeyCode::Backspace => {
+                self.app.command_query.pop();
+                self.app.palette_index = 0;
+            }
+            KeyCode::Up => self.app.palette_index = self.app.palette_index.saturating_sub(1),
+            KeyCode::Down => {
+                let length = palette_matches(&self.app.command_query).len();
+                if length > 0 {
+                    self.app.palette_index = (self.app.palette_index + 1).min(length - 1);
+                }
+            }
+            KeyCode::Enter => {
+                let id = palette_matches(&self.app.command_query)
+                    .get(self.app.palette_index)
+                    .copied();
+                self.app.command_mode = false;
+                if let Some(id) = id {
+                    return self.execute_action(id);
+                }
+            }
+            KeyCode::Char(character) if !character.is_control() => {
+                self.app.command_query.push(character);
+                self.app.palette_index = 0;
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    /// Runs the palette action with `id`. Returns `Ok(true)` when the app
+    /// should quit.
+    fn execute_action(&mut self, id: &str) -> Result<bool, CliError> {
+        match id {
+            "new" => self.action_new_secret(),
+            "edit" => self.action_edit_secret(),
+            "delete" => self.action_delete_secret(),
+            "seal" => self.action_seal()?,
+            "rotate" => self.action_rotate()?,
+            "import" => self.action_import()?,
+            "diff" => self.action_diff()?,
+            "status" => self.action_status()?,
+            "lock" => self.action_lock(),
+            "unlock" => self.action_unlock()?,
+            "delete-project" => self.action_delete_project()?,
+            "filter" => self.app.search_active = true,
+            "picker" => self.action_switch_project(),
+            "banner" => self.app.toggle_banner(),
+            "help" => self.action_help(),
+            "quit" => return Ok(true),
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn action_lock(&mut self) {
+        if let Some(vault) = self.vault.take() {
+            let _ = vault.close();
+        }
+        self.key = None;
+        self.sync_queue.clear();
+        self.app.lock();
+        self.app.note("Vault locked — press U to unlock");
+    }
+
+    fn action_unlock(&mut self) -> Result<(), CliError> {
+        match ops::open_vault() {
+            Ok((vault, key)) => {
+                self.vault = Some(vault);
+                self.key = Some(key);
+                self.app.vault_state = VaultState::Unlocked;
+                if let Err(error) = self.load_active_project() {
+                    self.app.fail(error.to_string());
+                    self.app.lock();
+                    self.key = None;
+                    if let Some(vault) = self.vault.take() {
+                        let _ = vault.close();
+                    }
+                } else {
+                    self.app.note("Vault unlocked");
+                }
+            }
+            Err(error) => {
+                self.app.vault_state = VaultState::Locked;
+                self.app.fail(error.to_string());
+            }
+        }
+        Ok(())
+    }
+
+    fn action_new_secret(&mut self) {
+        if !self.require_unlocked() {
+            return;
+        }
+        if self.project_ids.is_empty() || self.app.active_environment().is_none() {
+            self.app.fail("Select an environment first");
+            return;
+        }
+        self.app.popup = Some(Popup::New {
+            key: String::new(),
+            value: zeroize::Zeroizing::new(String::new()),
+            editing_value: false,
+            revealed: false,
+        });
+    }
+
+    fn action_edit_secret(&mut self) {
+        if !self.require_unlocked() {
+            return;
+        }
+        if let Some(index) = self.app.current_secret_index() {
+            self.app.popup = Some(Popup::Edit {
+                index,
+                value: self.app.secrets[index].value.clone(),
+                revealed: false,
+            });
+        } else {
+            self.app.fail("Select a secret first");
+        }
+    }
+
+    fn action_delete_secret(&mut self) {
+        if !self.require_unlocked() {
+            return;
+        }
+        if let Some(index) = self.app.current_secret_index() {
+            self.app.popup = Some(Popup::Delete { index });
+        } else {
+            self.app.fail("Select a secret first");
+        }
+    }
+
+    fn action_delete_project(&mut self) -> Result<(), CliError> {
+        if !self.require_unlocked() {
+            return Ok(());
+        }
+        self.open_project_delete()
+    }
+
+    fn action_switch_project(&mut self) {
+        self.app.popup = Some(Popup::ProjectPicker {
+            query: String::new(),
+            index: self.app.active_project,
+        });
+    }
+
+    fn action_help(&mut self) {
+        self.app.popup = Some(Popup::Help { scroll: 0 });
+    }
+
+    fn action_seal(&mut self) -> Result<(), CliError> {
+        if !self.require_unlocked() {
+            return Ok(());
+        }
+        self.propose_seal()
+    }
+
+    fn action_rotate(&mut self) -> Result<(), CliError> {
+        if !self.require_unlocked() {
+            return Ok(());
+        }
+        if self.app.active_environment().is_none() {
+            self.app.fail("Select an environment first");
+            return Ok(());
+        }
+        let environment = self
+            .app
+            .active_environment()
+            .map(|env| env.name.clone())
+            .unwrap_or_default();
+        self.app.popup = Some(Popup::Rotate {
+            environment,
+            stage: RotateStage::Current,
+            current: zeroize::Zeroizing::new(String::new()),
+            new_pass: zeroize::Zeroizing::new(String::new()),
+            confirm: zeroize::Zeroizing::new(String::new()),
+            revealed: false,
+        });
+        Ok(())
+    }
+
+    fn action_status(&mut self) -> Result<(), CliError> {
+        if !self.require_unlocked() {
+            return Ok(());
+        }
+        self.show_status()
+    }
+
+    fn action_diff(&mut self) -> Result<(), CliError> {
+        if !self.require_unlocked() {
+            return Ok(());
+        }
+        self.show_diff()
+    }
+
+    fn action_import(&mut self) -> Result<(), CliError> {
+        if !self.require_unlocked() {
+            return Ok(());
+        }
+        self.confirm_import()
+    }
+
+    fn action_copy_secret(&mut self) {
+        let Some(index) = self.app.current_secret_index() else {
+            self.app.fail("Select a secret first");
+            return;
+        };
+        match clipboard::copy_with_autoclear(self.app.secrets[index].value.as_str()) {
+            Ok(()) => self.app.note(format!(
+                "Copied '{}' — clipboard clears in {}s",
+                self.app.secrets[index].key,
+                clipboard::AUTOCLEAR_SECS
+            )),
+            Err(error) => self.app.fail(format!("Clipboard unavailable: {error}")),
+        }
     }
 
     fn require_unlocked(&mut self) -> bool {
@@ -387,6 +572,11 @@ impl Session {
     fn handle_paste(&mut self, text: &str) {
         let cleaned: String = text.chars().filter(|c| !c.is_control()).collect();
         if cleaned.is_empty() {
+            return;
+        }
+        if self.app.command_mode {
+            self.app.command_query.push_str(&cleaned);
+            self.app.palette_index = 0;
             return;
         }
         if self.app.search_active {
@@ -453,6 +643,28 @@ impl Session {
                     environment,
                     value,
                     purpose,
+                });
+            }
+            Some(Popup::Rotate {
+                environment,
+                stage,
+                mut current,
+                mut new_pass,
+                mut confirm,
+                revealed,
+            }) => {
+                match stage {
+                    RotateStage::Current => current.push_str(&cleaned),
+                    RotateStage::New => new_pass.push_str(&cleaned),
+                    RotateStage::Confirm => confirm.push_str(&cleaned),
+                }
+                self.app.popup = Some(Popup::Rotate {
+                    environment,
+                    stage,
+                    current,
+                    new_pass,
+                    confirm,
+                    revealed,
                 });
             }
             other => self.app.popup = other,
@@ -658,6 +870,193 @@ impl Session {
                 }
                 _ => self.app.popup = Some(Popup::ConfirmImport { environment }),
             },
+            Popup::ConfirmSeal {
+                project,
+                environments,
+                scroll,
+            } => {
+                if let Some(next) = self.scroll_popup(
+                    code,
+                    {
+                        let header = 3;
+                        header + environments.len()
+                    },
+                    scroll,
+                ) {
+                    self.app.popup = Some(Popup::ConfirmSeal {
+                        project,
+                        environments,
+                        scroll: next,
+                    });
+                    return Ok(false);
+                }
+                match code {
+                    KeyCode::Esc => return Ok(false),
+                    KeyCode::Enter => {
+                        // pop() takes from the back; reverse so execution
+                        // follows the preview's reading order.
+                        self.sync_queue = environments.into_iter().map(|(env, _)| env).collect();
+                        self.sync_queue.reverse();
+                        self.advance_sync()?;
+                        return Ok(false);
+                    }
+                    _ => {
+                        self.app.popup = Some(Popup::ConfirmSeal {
+                            project,
+                            environments,
+                            scroll,
+                        })
+                    }
+                }
+            }
+            Popup::Rotate {
+                environment,
+                mut stage,
+                mut current,
+                mut new_pass,
+                mut confirm,
+                mut revealed,
+            } => {
+                let done;
+                match code {
+                    KeyCode::Esc => return Ok(false),
+                    KeyCode::Char('r') if modifiers.contains(KeyModifiers::CONTROL) => {
+                        revealed = !revealed;
+                        done = false;
+                    }
+                    KeyCode::Backspace => {
+                        match stage {
+                            RotateStage::Current => {
+                                current.pop();
+                            }
+                            RotateStage::New => {
+                                new_pass.pop();
+                            }
+                            RotateStage::Confirm => {
+                                confirm.pop();
+                            }
+                        }
+                        done = false;
+                    }
+                    KeyCode::Enter => {
+                        match stage {
+                            RotateStage::Current => {
+                                if current.trim().is_empty() {
+                                    self.app.fail("Current passphrase must not be empty");
+                                } else {
+                                    stage = RotateStage::New;
+                                    revealed = false;
+                                }
+                                done = false;
+                            }
+                            RotateStage::New => {
+                                if new_pass.trim().is_empty() {
+                                    self.app.fail("New passphrase must not be empty");
+                                } else if *new_pass == *current {
+                                    self.app
+                                        .fail("New passphrase must differ from the current one");
+                                } else {
+                                    stage = RotateStage::Confirm;
+                                    revealed = false;
+                                }
+                                done = false;
+                            }
+                            RotateStage::Confirm => {
+                                if *confirm != *new_pass {
+                                    self.app.fail("Passphrases do not match");
+                                    done = false;
+                                } else {
+                                    done = true;
+                                }
+                            }
+                        }
+                        if !done {
+                            self.app.popup = Some(Popup::Rotate {
+                                environment,
+                                stage,
+                                current,
+                                new_pass,
+                                confirm,
+                                revealed,
+                            });
+                            return Ok(false);
+                        }
+                        let restore = |app: &mut App| {
+                            app.popup = Some(Popup::Rotate {
+                                environment: environment.clone(),
+                                stage,
+                                current: current.clone(),
+                                new_pass: new_pass.clone(),
+                                confirm: confirm.clone(),
+                                revealed,
+                            });
+                        };
+                        let Some(project) = self.project_ids.get(self.app.active_project).cloned()
+                        else {
+                            self.app.fail("Select a project first");
+                            restore(&mut self.app);
+                            return Ok(false);
+                        };
+                        let result = self.with_unlocked(|vault, key| {
+                            ops::rotate_environment(
+                                vault,
+                                key,
+                                &project,
+                                &environment,
+                                &self.artifact_path,
+                                current.as_str(),
+                                new_pass.as_str(),
+                            )
+                        });
+                        match result {
+                            Ok(()) => {
+                                self.app
+                                    .note(format!("Passphrase rotated for '{environment}'"));
+                                // Rotation refreshes the seal marker; repaint
+                                // the tree/inspector sync state to match.
+                                if let Some(vault) = self.vault.as_ref() {
+                                    let statuses: Vec<crate::core::SyncStatus> =
+                                        ops::status_report(
+                                            vault,
+                                            &project,
+                                            self.rotation_reminder_days,
+                                        )?
+                                        .into_iter()
+                                        .map(|row| row.sync_status)
+                                        .collect();
+                                    self.app.set_sync_statuses(statuses);
+                                }
+                            }
+                            Err(error) => {
+                                // Keep the dialog open with every stage buffer
+                                // intact — a typo must not cost the flow.
+                                self.app.fail(error.to_string());
+                                restore(&mut self.app);
+                            }
+                        }
+                        return Ok(false);
+                    }
+                    KeyCode::Char(character) if !character.is_control() => {
+                        match stage {
+                            RotateStage::Current => current.push(character),
+                            RotateStage::New => new_pass.push(character),
+                            RotateStage::Confirm => confirm.push(character),
+                        }
+                        done = false;
+                    }
+                    _ => done = false,
+                }
+                if !done {
+                    self.app.popup = Some(Popup::Rotate {
+                        environment,
+                        stage,
+                        current,
+                        new_pass,
+                        confirm,
+                        revealed,
+                    });
+                }
+            }
             Popup::ProjectPicker {
                 mut query,
                 mut index,
@@ -808,7 +1207,6 @@ impl Session {
             _ => None,
         }
     }
-
     fn sync_with_passphrase(
         &mut self,
         environment: &str,
@@ -821,17 +1219,23 @@ impl Session {
                 return Ok(());
             }
         };
+        let Some(vault) = self.vault.as_ref() else {
+            self.app.fail("Vault locked — press U to unlock");
+            return Ok(());
+        };
+        let Some(key) = self.key.as_ref() else {
+            self.app.fail("Master key is unavailable");
+            return Ok(());
+        };
         self.app.working = true;
-        let result = self.with_unlocked(|vault, key| {
-            ops::sync_environment(
-                vault,
-                key,
-                &project,
-                environment,
-                passphrase,
-                &self.artifact_path,
-            )
-        });
+        let result = ops::sync_environment(
+            vault,
+            key,
+            &project,
+            environment,
+            passphrase,
+            &self.artifact_path,
+        );
         self.app.working = false;
         let succeeded = result.is_ok();
         match result {
@@ -891,14 +1295,14 @@ impl Session {
         self.load_active_project()
     }
 
-    fn begin_sync(&mut self) -> Result<(), CliError> {
+    /// Builds the seal confirmation: the environments that will be written,
+    /// with their secret counts, so the user sees the blast radius before any
+    /// passphrase is requested (seal preview, FR-053).
+    fn propose_seal(&mut self) -> Result<(), CliError> {
         let Some(project) = self.project_ids.get(self.app.active_project).cloned() else {
             self.app.fail("Select a project first");
             return Ok(());
         };
-        if !self.require_unlocked() {
-            return Ok(());
-        }
         let environments = {
             let vault = self
                 .vault
@@ -906,11 +1310,33 @@ impl Session {
                 .ok_or_else(|| CliError::VaultOpen("vault is locked".into()))?;
             ops::load_environments(vault, &project)?
         };
-        self.sync_queue = environments
-            .into_iter()
-            .map(|environment| environment.name)
-            .collect();
-        self.advance_sync()
+        let mut listed: Vec<(String, usize)> = Vec::new();
+        for environment in environments {
+            let vault = self
+                .vault
+                .as_ref()
+                .ok_or_else(|| CliError::VaultOpen("vault is locked".into()))?;
+            let count = ops::count_secrets(vault, &project, &environment.name)?;
+            if count > 0 {
+                listed.push((environment.name, count));
+            }
+        }
+        if listed.is_empty() {
+            self.app.fail("No environments with secrets to seal");
+            return Ok(());
+        }
+        let project_name = self
+            .app
+            .projects
+            .get(self.app.active_project)
+            .map(|project| project.name.clone())
+            .unwrap_or_default();
+        self.app.popup = Some(Popup::ConfirmSeal {
+            project: project_name,
+            environments: listed,
+            scroll: 0,
+        });
+        Ok(())
     }
 
     fn advance_sync(&mut self) -> Result<(), CliError> {
@@ -924,7 +1350,16 @@ impl Session {
                     .vault
                     .as_ref()
                     .ok_or_else(|| CliError::VaultOpen("vault is locked".into()))?;
-                ops::environment_has_secrets(vault, &project, &environment)?
+                // A transient DB error mid-queue must not kill the session:
+                // report it in the status bar and stop the queue cleanly.
+                match ops::environment_has_secrets(vault, &project, &environment) {
+                    Ok(has) => has,
+                    Err(error) => {
+                        self.sync_queue.clear();
+                        self.app.fail(format!("'{environment}' skipped: {error}"));
+                        return Ok(());
+                    }
+                }
             };
             if !has_secrets {
                 continue;

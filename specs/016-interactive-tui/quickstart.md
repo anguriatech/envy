@@ -27,22 +27,26 @@ envy                      # banner + sidebar + table; Q quits cleanly
 
 ## Manual smoke checklist (TTY only)
 
-1. `envy` → banner renders with bluish-purple gradient; header shows `[Unlocked]`, project and active env.
+1. `envy` → three-panel console: tree | secrets | Details inspector (inspector hidden under 100 cols); bottom shows status row + contextual legend.
 2. `B` collapses/expands the banner.
-3. `F` + type → visible search box and table filter update live; `Enter` closes the line and the filter stays visible in the panel title; `Esc` closes.
-4. `Space` on a row → value reveals; arrow down → re-masks.
-5. `N` → new secret popup (masked input, `Ctrl+R` reveals); `Enter` on the key field moves to the value field; `Enter` saves → `envy get KEY` outside shows it.
-6. `E` / `D` round-trip; `D` shows the key name and env and asks confirmation.
-7. `S` → syncs `envy.enc` (env-var passphrase if set, else masked popup per env); working indicator shows; `Esc` on the popup aborts the queue.
-8. `L` → header `[Locked]`, table cleared, structure kept; pressing `N`/`S`/`T` now shows "Vault locked — press U to unlock"; `U` → reloaded.
-9. `Esc` on the main screen shows the "Press Q to quit" hint and does NOT exit; `Q`/`Ctrl+C` exits.
-10. `?` opens scrollable grouped help (`↑↓`/`j`/`k` scroll); `Y` asks confirmation before importing; `G`/`T` popups scroll if long.
-11. Paste (`Ctrl+Shift+V`) into the New/Edit/passphrase/search fields.
-12. `NO_COLOR=1 envy` → banner/UI plain, still usable; errors still readable.
-13. `envy` with stdout piped → help on stderr, exit 0, no escapes (headless CI-safe).
-14. Run `envy` from a nested project directory → `S` updates `envy.enc` beside discovered `envy.toml`, not nested cwd.
-15. `P` opens searchable project selection; `X` deletes selected project only after exact-name confirmation.
-16. `↑↓` moves through all projects/tree entries; `Enter` or `→` expands/selects; `←` collapses.
+3. Tab between panels → legend row changes to the focused panel's keys.
+4. Inspector: select project → sync summary (in sync / modified / never sealed); select environment → sync state + counts; select secret → key/value/updated + actions.
+5. `:` → palette opens; type `seal` → matches; `Esc` closes; `Enter` executes "Project status" etc.
+6. `S` → seal-preview confirmation listing environments with secret counts; `Esc` cancels.
+7. `R` on an environment → rotate flow (current → new → confirm, masked, Ctrl+R reveals); wrong current passphrase fails without touching the artifact.
+8. Seal an already-sealed environment with a different passphrase → error points to `R` (rotate) or `Y` (import), both recover in-TUI.
+9. Secrets panel `Y` → "Copied 'KEY' — clipboard clears in 30s" in the status row; paste somewhere to verify; tree `Y` → import confirmation (unchanged).
+10. `F` + type → visible search box and live filter; `Enter` closes the line and the filter stays visible in the panel title.
+11. `Space` on a row → value reveals; arrow down → re-masks.
+12. `N` → new secret popup; `Enter` on the key field moves to the value field; `Enter` saves.
+13. `L` → `[Locked]`, keys guarded with "Vault locked — press U to unlock"; `U` → reloaded.
+14. `Esc` on the main screen shows the "Press Q to quit" hint and does NOT exit; `Q`/`Ctrl+C` exits.
+15. `?` opens scrollable grouped help; `G`/`T` popups scroll if long.
+16. Paste (`Ctrl+Shift+V`) into the New/Edit/passphrase/search fields.
+17. `NO_COLOR=1 envy` → plain but fully usable; errors still readable.
+18. `envy` with stdout piped → help on stderr, exit 0, no escapes (headless CI-safe).
+19. Run `envy` from a nested project directory → `S` updates `envy.enc` beside discovered `envy.toml`, not nested cwd.
+20. `P` opens searchable project selection; `X` deletes selected project only after exact-name confirmation.
 14. `T` shows project status, `G` shows active-environment diff, `Y` imports/unseals active environment.
 15. Long project lists scroll while keeping highlighted project visible; `P` picker scrolls all matches.
 16. Footer shows primary controls only; press `?` for grouped complete help.

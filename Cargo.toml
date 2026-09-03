@@ -33,6 +33,7 @@ ignore          = "0.4"
 ratatui        = "0.29"
 crossterm      = "0.28"
 console        = "0.15"
+arboard        = "3"
 
 [dev-dependencies]
 tempfile = "3"

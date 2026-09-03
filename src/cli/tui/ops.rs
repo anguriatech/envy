@@ -8,6 +8,19 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use zeroize::Zeroizing;
 
+/// Distinguishes a passphrase mismatch (recoverable in-TUI through rotate or
+/// import) from every other seal failure, which stay opaque `CliError`s.
+#[derive(Debug, thiserror::Error)]
+pub enum SealError {
+    #[error(
+        "passphrase does not match the existing envelope for '{0}' — press R to rotate or Y to import"
+    )]
+    Mismatch(String),
+
+    #[error("{0}")]
+    Other(#[from] CliError),
+}
+
 pub fn load_projects(vault: &Vault) -> Result<Vec<core::ProjectSummary>, CliError> {
     core::list_projects(vault).map_err(CliError::Core)
 }
@@ -76,6 +89,19 @@ pub fn environment_has_secrets(
     core::list_secret_keys(vault, project, environment)
         .map(|keys| !keys.is_empty())
         .map_err(CliError::Core)
+}
+
+/// Number of secrets in an environment (0 when the environment is missing).
+pub fn count_secrets(
+    vault: &Vault,
+    project: &ProjectId,
+    environment: &str,
+) -> Result<usize, CliError> {
+    match core::list_secret_keys(vault, project, environment) {
+        Ok(keys) => Ok(keys.len()),
+        Err(crate::core::CoreError::Db(crate::db::DbError::NotFound)) => Ok(0),
+        Err(error) => Err(CliError::Core(error)),
+    }
 }
 
 pub fn status_report(
@@ -204,24 +230,78 @@ pub fn sync_environment(
     environment: &str,
     passphrase: &str,
     artifact_path: &Path,
-) -> Result<(), CliError> {
+) -> Result<(), SealError> {
     let mut artifact = match core::read_artifact(artifact_path) {
         Ok(artifact) => artifact,
         Err(core::SyncError::FileNotFound(_)) => core::new_empty_artifact(),
-        Err(error) => return Err(CliError::ArtifactUnreadable(error.to_string())),
+        Err(error) => {
+            return Err(SealError::Other(CliError::ArtifactUnreadable(
+                error.to_string(),
+            )));
+        }
     };
-    if let Some(existing) = artifact.environments.get(environment)
+    // Vault environment names are lowercase (core::normalize_env); the artifact
+    // keys them lowercased too, so the lookup normalizes for defense in depth.
+    let envelope_key = environment.to_ascii_lowercase();
+    if let Some(existing) = artifact.environments.get(&envelope_key)
         && !core::check_envelope_passphrase(passphrase, environment, existing)
     {
-        return Err(CliError::Output(format!(
-            "incorrect passphrase for environment '{environment}'; run `envy rotate`"
-        )));
+        return Err(SealError::Mismatch(envelope_key));
     }
     let envelope = core::seal_env_unmarked(vault, key, project, environment, passphrase)
-        .map_err(|error| CliError::Output(error.to_string()))?;
-    artifact
-        .environments
-        .insert(environment.to_ascii_lowercase(), envelope);
+        .map_err(|error| SealError::Other(CliError::Output(error.to_string())))?;
+    artifact.environments.insert(envelope_key, envelope);
+    core::write_artifact(&artifact, artifact_path)
+        .map_err(|error| SealError::Other(CliError::Output(error.to_string())))?;
+    core::mark_env_sealed(vault, project, environment)
+        .map_err(|error| SealError::Other(CliError::Output(error.to_string())))
+}
+
+/// Re-seals `environment` in `envy.enc` with a new passphrase after verifying
+/// `current`. The safe in-TUI path for the rotation dead-end: a wrong current
+/// passphrase fails before the artifact is touched (core::rotate_env contract).
+pub fn rotate_environment(
+    vault: &Vault,
+    key: &[u8; 32],
+    project: &ProjectId,
+    environment: &str,
+    artifact_path: &Path,
+    current: &str,
+    new_pass: &str,
+) -> Result<(), CliError> {
+    let mut artifact = match core::read_artifact(artifact_path) {
+        Ok(artifact) => artifact,
+        Err(core::SyncError::FileNotFound(path)) => {
+            return Err(CliError::FileNotFound(
+                path,
+                "envy.enc not found; seal the environment first".into(),
+            ));
+        }
+        Err(error) => return Err(CliError::ArtifactUnreadable(error.to_string())),
+    };
+    core::rotate_env(
+        vault,
+        key,
+        project,
+        &mut artifact,
+        environment,
+        current,
+        new_pass,
+    )
+    .map_err(|error| match error {
+        core::SyncError::Artifact(crypto::artifact::ArtifactError::MalformedArtifact(_)) => {
+            CliError::EnvNotFound(environment.to_owned())
+        }
+        core::SyncError::Artifact(crypto::artifact::ArtifactError::MalformedEnvelope(_, _)) => {
+            CliError::PassphraseInput(
+                "current passphrase does not match the existing envelope".into(),
+            )
+        }
+        core::SyncError::Artifact(crypto::artifact::ArtifactError::WeakPassphrase) => {
+            CliError::PassphraseInput("new passphrase must not be empty or whitespace".into())
+        }
+        other => CliError::Output(other.to_string()),
+    })?;
     core::write_artifact(&artifact, artifact_path)
         .map_err(|error| CliError::Output(error.to_string()))?;
     core::mark_env_sealed(vault, project, environment)
@@ -327,7 +407,10 @@ mod tests {
             &artifact_path,
         )
         .expect_err("wrong existing passphrase must fail");
-        assert!(mismatch.to_string().contains("envy rotate"));
+        assert!(
+            matches!(mismatch, SealError::Mismatch(ref env) if env == "development"),
+            "mismatch must be distinguishable from other failures, got: {mismatch:?}"
+        );
 
         let artifact = core::read_artifact(&artifact_path).expect("artifact");
         assert_eq!(artifact.environments.len(), 2);
@@ -341,6 +424,62 @@ mod tests {
             "production",
             &artifact.environments["production"]
         ));
+    }
+
+    #[test]
+    fn first_seal_of_never_sealed_environment_succeeds() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let vault_path = temp.path().join("vault.db");
+        let vault = Vault::open(&vault_path, &TEST_KEY).expect("vault");
+        let project = vault.create_project("fresh").expect("project");
+        set_secret(&vault, &TEST_KEY, &project, "development", "TOKEN", "v").expect("secret");
+        let artifact_path = temp.path().join("envy.enc");
+
+        // Regression: sealing an environment that has never been encrypted must
+        // not trip the existing-envelope passphrase check.
+        sync_environment(
+            &vault,
+            &TEST_KEY,
+            &project,
+            "development",
+            "first-pass",
+            &artifact_path,
+        )
+        .expect("first seal must succeed");
+
+        let artifact = core::read_artifact(&artifact_path).expect("artifact");
+        assert!(artifact.environments.contains_key("development"));
+    }
+
+    #[test]
+    fn sync_lookup_is_case_insensitive_against_artifact_keys() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let vault_path = temp.path().join("vault.db");
+        let vault = Vault::open(&vault_path, &TEST_KEY).expect("vault");
+        let project = vault.create_project("casing").expect("project");
+        set_secret(&vault, &TEST_KEY, &project, "development", "TOKEN", "v").expect("secret");
+        let artifact_path = temp.path().join("envy.enc");
+
+        sync_environment(
+            &vault,
+            &TEST_KEY,
+            &project,
+            "development",
+            "same-pass",
+            &artifact_path,
+        )
+        .expect("initial seal");
+        // Mixed-case re-seal with the CORRECT passphrase must not be reported
+        // as a mismatch (artifact keys are lowercased).
+        sync_environment(
+            &vault,
+            &TEST_KEY,
+            &project,
+            "Development",
+            "same-pass",
+            &artifact_path,
+        )
+        .expect("case-insensitive re-seal");
     }
 
     #[test]
@@ -361,9 +500,136 @@ mod tests {
             &bad_path,
         )
         .expect_err("write must fail");
-        assert!(error.to_string().contains("failed to read/write"));
+        assert!(
+            error.to_string().contains("failed to read/write"),
+            "unexpected error: {error}"
+        );
         let status = vault.environment_status(&project).expect("status");
         assert!(status[0].sealed_at.is_none());
+    }
+
+    #[test]
+    fn count_secrets_reports_zero_for_missing_environment() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let vault_path = temp.path().join("vault.db");
+        let vault = Vault::open(&vault_path, &TEST_KEY).expect("vault");
+        let project = vault.create_project("counting").expect("project");
+
+        assert_eq!(
+            count_secrets(&vault, &project, "nowhere").expect("missing env counts as 0"),
+            0
+        );
+        set_secret(&vault, &TEST_KEY, &project, "development", "A", "1").expect("A");
+        set_secret(&vault, &TEST_KEY, &project, "development", "B", "2").expect("B");
+        assert_eq!(
+            count_secrets(&vault, &project, "development").expect("count"),
+            2
+        );
+    }
+
+    #[test]
+    fn rotate_environment_error_mappings() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let vault_path = temp.path().join("vault.db");
+        let vault = Vault::open(&vault_path, &TEST_KEY).expect("vault");
+        let project = vault.create_project("rotate-errors").expect("project");
+        set_secret(&vault, &TEST_KEY, &project, "development", "TOKEN", "v").expect("secret");
+        let artifact_path = temp.path().join("envy.enc");
+
+        // Missing artifact → FileNotFound (exit-code 1 family).
+        let missing = rotate_environment(
+            &vault,
+            &TEST_KEY,
+            &project,
+            "development",
+            &artifact_path,
+            "current",
+            "new",
+        )
+        .expect_err("missing artifact must fail");
+        assert!(
+            missing.to_string().contains("envy.enc not found"),
+            "unexpected error: {missing}"
+        );
+
+        // Artifact present but env not sealed in it → EnvNotFound.
+        let empty_artifact = core::new_empty_artifact();
+        core::write_artifact(&empty_artifact, &artifact_path).expect("write empty artifact");
+        let absent = rotate_environment(
+            &vault,
+            &TEST_KEY,
+            &project,
+            "development",
+            &artifact_path,
+            "current",
+            "new",
+        )
+        .expect_err("absent env must fail");
+        assert!(
+            matches!(absent, CliError::EnvNotFound(ref env) if env == "development"),
+            "unexpected error: {absent}"
+        );
+    }
+
+    #[test]
+    fn rotate_environment_re_seals_with_new_passphrase() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let vault_path = temp.path().join("vault.db");
+        let vault = Vault::open(&vault_path, &TEST_KEY).expect("vault");
+        let project = vault.create_project("rotate-me").expect("project");
+        set_secret(&vault, &TEST_KEY, &project, "development", "TOKEN", "v").expect("secret");
+        let artifact_path = temp.path().join("envy.enc");
+
+        sync_environment(
+            &vault,
+            &TEST_KEY,
+            &project,
+            "development",
+            "old-pass",
+            &artifact_path,
+        )
+        .expect("initial seal");
+
+        rotate_environment(
+            &vault,
+            &TEST_KEY,
+            &project,
+            "development",
+            &artifact_path,
+            "old-pass",
+            "new-pass",
+        )
+        .expect("rotate must succeed");
+
+        let artifact = core::read_artifact(&artifact_path).expect("artifact");
+        let envelope = &artifact.environments["development"];
+        assert!(core::check_envelope_passphrase(
+            "new-pass",
+            "development",
+            envelope
+        ));
+        assert!(!core::check_envelope_passphrase(
+            "old-pass",
+            "development",
+            envelope
+        ));
+
+        let wrong_current = rotate_environment(
+            &vault,
+            &TEST_KEY,
+            &project,
+            "development",
+            &artifact_path,
+            "old-pass",
+            "another",
+        )
+        .expect_err("wrong current passphrase must fail");
+        assert!(
+            wrong_current
+                .to_string()
+                .contains("current passphrase does not match"),
+            "unexpected error: {wrong_current}"
+        );
     }
 
     #[test]
