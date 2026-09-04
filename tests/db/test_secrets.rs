@@ -1,6 +1,6 @@
 // Integration tests for the db layer — secret upsert, overwrite, cascade deletes.
 
-use envy::db::{DbError, EnvId, Vault};
+use envy_secrets::db::{DbError, EnvId, Vault};
 
 const DUMMY_KEY: [u8; 32] = [0u8; 32];
 const NONCE_12: [u8; 12] = [1u8; 12];

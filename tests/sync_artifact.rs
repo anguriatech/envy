@@ -9,9 +9,13 @@ use std::collections::BTreeMap;
 use base64ct::{Base64, Encoding};
 use zeroize::Zeroizing;
 
-use envy::core::{read_artifact, seal_artifact, set_secret, unseal_artifact, write_artifact};
-use envy::crypto::artifact::{ARTIFACT_VERSION, ArtifactPayload, SyncArtifact, seal_envelope};
-use envy::db::{ProjectId, Vault};
+use envy_secrets::core::{
+    read_artifact, seal_artifact, set_secret, unseal_artifact, write_artifact,
+};
+use envy_secrets::crypto::artifact::{
+    ARTIFACT_VERSION, ArtifactPayload, SyncArtifact, seal_envelope,
+};
+use envy_secrets::db::{ProjectId, Vault};
 
 // ---------------------------------------------------------------------------
 // T033 — Shared test vault helper

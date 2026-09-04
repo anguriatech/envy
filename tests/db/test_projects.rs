@@ -1,6 +1,6 @@
 // Integration tests for the db layer — project CRUD operations.
 
-use envy::db::{DbError, ProjectId, Vault};
+use envy_secrets::db::{DbError, ProjectId, Vault};
 
 const DUMMY_KEY: [u8; 32] = [0u8; 32];
 

@@ -860,7 +860,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "envy"
+name = "envy-secrets"
 version = "0.5.1"
 dependencies = [
  "aes-gcm",
