@@ -7,7 +7,6 @@
 //! launched `envy` — instead of the whole vault, which lets every sidebar
 //! project carry its own correct artifact path (FR-022).
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::Manifest;
@@ -39,11 +38,12 @@ pub struct DiscoveredProject {
 ///
 /// Results are sorted by manifest directory for a stable sidebar order. If
 /// the same `project_id` appears in two directories (a copied manifest), the
-/// first in that stable order wins and later duplicates are dropped.
+/// entry earliest in that stable order wins and later duplicates are dropped
+/// — the choice never depends on filesystem walk order.
 pub fn discover_projects(root: &Path) -> Vec<DiscoveredProject> {
-    let mut found: HashMap<String, DiscoveredProject> = HashMap::new();
+    let mut found: Vec<DiscoveredProject> = Vec::new();
     if let Some(project) = parse_manifest_dir(root.to_path_buf()) {
-        found.insert(project.project_id.clone(), project);
+        found.push(project);
     }
 
     let walker = ignore::WalkBuilder::new(root)
@@ -61,13 +61,15 @@ pub fn discover_projects(root: &Path) -> Vec<DiscoveredProject> {
         if entry.file_type().is_some_and(|t| t.is_dir())
             && let Some(project) = parse_manifest_dir(entry.into_path())
         {
-            found.entry(project.project_id.clone()).or_insert(project);
+            found.push(project);
         }
     }
 
-    let mut out: Vec<DiscoveredProject> = found.into_values().collect();
-    out.sort_by(|a, b| a.manifest_dir.cmp(&b.manifest_dir));
-    out
+    found.sort_by(|a, b| a.manifest_dir.cmp(&b.manifest_dir));
+    // dedup_by keeps the first of each equal run — after the sort that is
+    // the lexicographically-first manifest directory for that id.
+    found.dedup_by(|a, b| a.project_id == b.project_id);
+    found
 }
 
 /// Parses `dir/envy.toml`, returning `None` when the file does not exist or
