@@ -1,6 +1,6 @@
 // Integration tests for the db layer — plaintext absence and SQLCipher encryption verification.
 
-use envy::db::Vault;
+use envy_secrets::db::Vault;
 
 const DUMMY_KEY: [u8; 32] = [0u8; 32];
 

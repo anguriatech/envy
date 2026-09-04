@@ -1,6 +1,6 @@
 // Integration tests for the db layer — environment CRUD, uniqueness, cascade deletes.
 
-use envy::db::{DbError, EnvId, ProjectId, Vault};
+use envy_secrets::db::{DbError, EnvId, ProjectId, Vault};
 
 const DUMMY_KEY: [u8; 32] = [0u8; 32];
 

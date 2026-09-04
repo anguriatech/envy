@@ -1,15 +1,37 @@
 [package]
-name = "envy"
+name = "envy-secrets"
 version = "0.5.1"
 edition = "2024"
 rust-version = "1.85"
 description = "A secure, deterministic, and frictionless environment variable manager"
 authors = ["Anguria Team"]
-keywords = ["cli", "env", "secrets", "security"]
+keywords = ["cli", "env", "secrets", "security", "dotenv"]
 categories = ["command-line-utilities", "cryptography"]
 license = "MIT"
 repository = "https://github.com/anguriatech/envy"
 homepage = "https://github.com/anguriatech/envy"
+exclude = [
+    ".opencode",
+    ".specify",
+    ".github",
+    "examples",
+    "specs",
+    "scripts",
+    "vhs",
+    "docs",
+    "AGENTS.md",
+    "PRODUCT.md",
+    "envy.enc",
+    ".gitignore",
+    "demo.tape",
+    "dist-workspace.toml",
+]
+
+# The published package is `envy-secrets` (the crate name `envy` is taken on
+# crates.io) but the installed command stays `envy`.
+[[bin]]
+name = "envy"
+path = "src/main.rs"
 
 [dependencies]
 clap      = { version = "4", features = ["derive"] }

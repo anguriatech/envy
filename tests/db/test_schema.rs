@@ -1,6 +1,6 @@
 // Integration tests for the db layer — schema creation, migration, idempotency.
 
-use envy::db::{DbError, Vault};
+use envy_secrets::db::{DbError, Vault};
 
 /// A 32-byte all-zero key used across schema tests.
 /// Key strength is irrelevant here — we are testing schema structure, not cryptography.

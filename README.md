@@ -22,6 +22,10 @@ brew install anguriatech/tap/envy
 npm install -g @anguriatech/envy
 ```
 
+```bash
+cargo install envy-secrets
+```
+
 </div>
 
 ---
@@ -612,6 +616,13 @@ brew install anguriatech/tap/envy
 npm install -g @anguriatech/envy
 # or run without installing:
 npx @anguriatech/envy
+```
+
+**Cargo (Rust toolchain)**
+
+```bash
+cargo install envy-secrets
+# installs the `envy` command
 ```
 
 **macOS & Linux (shell installer)**
