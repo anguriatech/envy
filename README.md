@@ -171,6 +171,16 @@ masked secrets, and an inspector column with sync state and metadata — all wit
 the output contract of existing commands. Launching from a project directory focuses that
 project's entry in the tree.
 
+The TUI is **workspace-scoped**: the tree shows the projects whose `envy.toml` manifests sit
+at or below the directory where you launched `envy` (full depth, `.gitignore` respected), and
+every project carries its own artifact path and rotation threshold. Projects from the rest of
+the vault stay out of the way — launch from your monorepo root or from a single project, and
+only what you can reach gets shown.
+
+The gradient banner opens expanded on terminals tall enough (32+ rows); otherwise — or after
+pressing `B` — it collapses to a one-line identity strip with the current version and
+workspace name, so the brand is present without eating screen space.
+
 | Key | Panel | Action |
 |---|---|---|
 | `↑↓` / `j` `k` | both | Move selection |
@@ -185,6 +195,7 @@ project's entry in the tree.
 | `Y` | tree | Import environment from `envy.enc` (confirms) |
 | `R` | tree | Rotate environment passphrase in-place |
 | `X` | tree | Delete selected project (exact-name confirmation) |
+| `B` | both | Toggle banner (full gradient logo or compact strip) |
 | `L` / `U` | both | Lock or unlock the vault |
 | `:` | both | Command palette — every action, searchable |
 | `?` | both | Full help (scrollable) |

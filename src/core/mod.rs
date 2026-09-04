@@ -7,6 +7,7 @@
 
 pub mod audit;
 pub mod diff;
+pub mod discover;
 mod error;
 mod manifest;
 mod ops;
@@ -16,6 +17,7 @@ pub mod sync;
 
 pub use audit::{AuditAction, AuditEntry, list_audit, record as record_audit};
 pub use diff::{ChangeType, DiffEntry, DiffReport, compute_diff};
+pub use discover::{DiscoveredProject, discover_projects};
 pub use error::CoreError;
 pub use manifest::{Manifest, create_manifest, find_manifest};
 pub use ops::{

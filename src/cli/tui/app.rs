@@ -221,12 +221,14 @@ pub struct App {
     pub status: String,
     pub status_is_error: bool,
     pub working: bool,
+    /// Name of the launch directory shown in the compact banner strip.
+    pub workspace_name: String,
     /// Compact display form of the envy.enc location (never a secret).
     pub artifact_path: String,
 }
 
 impl App {
-    pub fn new(projects: Vec<ProjectSummary>) -> Self {
+    pub fn new(projects: Vec<ProjectSummary>, expanded_banner: bool) -> Self {
         Self {
             projects,
             environments: Vec::new(),
@@ -243,12 +245,13 @@ impl App {
             command_mode: false,
             command_query: String::new(),
             palette_index: 0,
-            compact_banner: true,
+            compact_banner: !expanded_banner,
             vault_state: VaultState::Unlocked,
             popup: None,
             status: String::from("Ready — press ? for help"),
             status_is_error: false,
             working: false,
+            workspace_name: String::from("envy"),
             artifact_path: String::new(),
         }
     }
@@ -471,10 +474,13 @@ mod tests {
     use super::*;
 
     fn app() -> App {
-        App::new(vec![ProjectSummary {
-            id: crate::db::ProjectId("p".into()),
-            name: "demo".into(),
-        }])
+        App::new(
+            vec![ProjectSummary {
+                id: crate::db::ProjectId("p".into()),
+                name: "demo".into(),
+            }],
+            false,
+        )
     }
 
     #[test]
@@ -574,31 +580,37 @@ mod tests {
 
     #[test]
     fn filters_projects_case_insensitively() {
-        let app = App::new(vec![
-            ProjectSummary {
-                id: crate::db::ProjectId("one".into()),
-                name: "Production".into(),
-            },
-            ProjectSummary {
-                id: crate::db::ProjectId("two".into()),
-                name: "Development".into(),
-            },
-        ]);
+        let app = App::new(
+            vec![
+                ProjectSummary {
+                    id: crate::db::ProjectId("one".into()),
+                    name: "Production".into(),
+                },
+                ProjectSummary {
+                    id: crate::db::ProjectId("two".into()),
+                    name: "Development".into(),
+                },
+            ],
+            false,
+        );
         assert_eq!(app.filtered_project_indices("prod"), vec![0]);
     }
 
     #[test]
     fn flatten_sidebar_shows_all_projects_and_expanded_envs() {
-        let mut app = App::new(vec![
-            ProjectSummary {
-                id: crate::db::ProjectId("a".into()),
-                name: "alpha".into(),
-            },
-            ProjectSummary {
-                id: crate::db::ProjectId("b".into()),
-                name: "beta".into(),
-            },
-        ]);
+        let mut app = App::new(
+            vec![
+                ProjectSummary {
+                    id: crate::db::ProjectId("a".into()),
+                    name: "alpha".into(),
+                },
+                ProjectSummary {
+                    id: crate::db::ProjectId("b".into()),
+                    name: "beta".into(),
+                },
+            ],
+            false,
+        );
         app.active_project = 1;
         app.expanded = true;
         app.environments = vec![EnvironmentSummary {
@@ -625,7 +637,7 @@ mod tests {
                 name: format!("project-{index}"),
             })
             .collect();
-        let mut app = App::new(projects);
+        let mut app = App::new(projects, false);
         app.move_sidebar_cursor(1_000);
         assert_eq!(app.sidebar_cursor, 99);
         assert_eq!(app.current_sidebar_entry(), Some(SidebarEntry::Project(99)));
