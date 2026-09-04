@@ -198,6 +198,7 @@ A new user or contributor finds an "Interactive TUI" section in the README — w
 - **FR-059**: Environment lookups for sync/rotate/mark MUST normalize names (lowercase) against the vault and artifact keys so mixed-case input cannot produce "record not found" or false passphrase mismatches.
 - **FR-060**: Launching the TUI from a project directory MUST focus that project in the tree (resolved from the manifest's project id), falling back to the first vault project when no manifest exists or its project is absent from the vault.
 - **FR-061**: At launch, the TUI MUST discover `envy.toml` manifests walking downward from the launch directory (unbounded depth, `.gitignore` respected, hidden directories skipped) and scope the sidebar to those manifests that map to existing vault rows; each discovered project carries its own artifact path (`manifest_dir/envy.enc`) and rotation threshold. Malformed manifests are skipped; orphan manifests (no vault row) are excluded; discovery happens at launch only.
+- **FR-062**: The TUI MUST open with the full gradient banner when the terminal is at least 32 rows tall, and with a compact identity strip otherwise; `B` MUST toggle between the two for the session. The compact strip MUST show the wordmark, the application version, and the launch-directory name in dim gray, degrading to the bare wordmark on terminals narrower than 40 columns. The strip carries identity metadata only — no paths beyond the workspace name.
 
 ### Key Entities *(include if feature involves data)*
 

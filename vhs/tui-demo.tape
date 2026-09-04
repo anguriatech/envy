@@ -89,7 +89,9 @@ Type "envy"
 Enter
 Sleep 3s
 
-# ━━━ Brand moment: full gradient banner, then back to compact ━━━
+# ━━━ Brand moment: b expands the gradient banner, then back to the strip ━━━
+# (700px render ≈ 31 rows < BANNER_MIN_HEIGHT, so the TUI opens with the
+# compact identity strip — ENVY · v0.5.1 · envy-tui-demo — and b expands)
 Type "b"
 Sleep 2s
 Type "b"

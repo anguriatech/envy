@@ -177,6 +177,10 @@ every project carries its own artifact path and rotation threshold. Projects fro
 the vault stay out of the way — launch from your monorepo root or from a single project, and
 only what you can reach gets shown.
 
+The gradient banner opens expanded on terminals tall enough (32+ rows); otherwise — or after
+pressing `B` — it collapses to a one-line identity strip with the current version and
+workspace name, so the brand is present without eating screen space.
+
 | Key | Panel | Action |
 |---|---|---|
 | `↑↓` / `j` `k` | both | Move selection |
@@ -191,6 +195,7 @@ only what you can reach gets shown.
 | `Y` | tree | Import environment from `envy.enc` (confirms) |
 | `R` | tree | Rotate environment passphrase in-place |
 | `X` | tree | Delete selected project (exact-name confirmation) |
+| `B` | both | Toggle banner (full gradient logo or compact strip) |
 | `L` / `U` | both | Lock or unlock the vault |
 | `:` | both | Command palette — every action, searchable |
 | `?` | both | Full help (scrollable) |

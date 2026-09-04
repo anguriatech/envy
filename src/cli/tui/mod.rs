@@ -66,7 +66,14 @@ pub(super) fn run() -> Result<(), CliError> {
         .iter()
         .map(|project| project.id.clone())
         .collect();
-    let mut app = App::new(workspace_projects);
+    let terminal = ratatui::init();
+    // FR-062: the full gradient banner needs vertical room — taller
+    // terminals open expanded, the rest with the compact identity strip.
+    let expanded_banner = terminal
+        .size()
+        .map(|size| size.height >= banner::BANNER_MIN_HEIGHT)
+        .unwrap_or(false);
+    let mut app = App::new(workspace_projects, expanded_banner);
     // Launching bare `envy` inside a project directory should land on that
     // project, not on whichever row happens to be first in the vault. A
     // manifest found *above* the launch directory belongs to a project
@@ -76,6 +83,10 @@ pub(super) fn run() -> Result<(), CliError> {
     {
         app.active_project = index;
     }
+    app.workspace_name = cwd
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "envy".into());
     let artifact_paths: HashMap<String, PathBuf> = workspace
         .iter()
         .map(|(id, project)| (id.clone(), project.artifact_path.clone()))
@@ -85,7 +96,7 @@ pub(super) fn run() -> Result<(), CliError> {
         .map(|(id, project)| (id.clone(), project.rotation_reminder_days))
         .collect();
     let mut session = Session {
-        terminal: ratatui::init(),
+        terminal,
         vault: Some(vault),
         key: Some(key),
         project_ids,
