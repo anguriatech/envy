@@ -186,8 +186,13 @@ fn sync_status_color(status: &crate::core::SyncStatus) -> Color {
 fn draw_tree(frame: &mut Frame, area: Rect, app: &App) {
     if app.projects.is_empty() {
         frame.render_widget(
-            Paragraph::new("No projects.\nRun `envy init` first.")
-                .block(panel_block("Projects", app.focus == Focus::Sidebar)),
+            Paragraph::new(
+                "No envy projects found from here.\n\nProjects come from envy.toml manifests \
+                 at or below the launch directory.\nRun `envy init` in a project directory, \
+                 or launch envy from a project root.",
+            )
+            .wrap(ratatui::widgets::Wrap { trim: true })
+            .block(panel_block("Projects", app.focus == Focus::Sidebar)),
             area,
         );
         return;
@@ -469,7 +474,7 @@ fn draw_context(frame: &mut Frame, area: Rect, app: &App) {
         field_row(
             &mut lines,
             "path",
-            Span::raw(app.artifact_context().to_owned()),
+            Span::raw(compact_artifact_label(app.artifact_context())),
         );
     }
 
@@ -477,4 +482,39 @@ fn draw_context(frame: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(lines).block(panel_block("Details", false)),
         area,
     );
+}
+
+/// Compacts a workspace-relative artifact label for the narrow Details
+/// panel: labels longer than two segments keep the tail with a leading
+/// ellipsis (`alpha/beta/envy.enc` → `…beta/envy.enc`).
+fn compact_artifact_label(label: &str) -> String {
+    let segments: Vec<&str> = label.split('/').collect();
+    if segments.len() <= 2 {
+        return label.to_owned();
+    }
+    format!(
+        "…{}/{}",
+        segments[segments.len() - 2],
+        segments[segments.len() - 1]
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compact_artifact_label;
+
+    #[test]
+    fn compact_artifact_label_keeps_short_labels_intact() {
+        assert_eq!(compact_artifact_label("envy.enc"), "envy.enc");
+        assert_eq!(compact_artifact_label("alpha/envy.enc"), "alpha/envy.enc");
+    }
+
+    #[test]
+    fn compact_artifact_label_trims_deeper_paths_to_two_segments() {
+        assert_eq!(
+            compact_artifact_label("alpha/beta/envy.enc"),
+            "…beta/envy.enc"
+        );
+        assert_eq!(compact_artifact_label("a/b/c/d/envy.enc"), "…d/envy.enc");
+    }
 }

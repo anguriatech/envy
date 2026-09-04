@@ -158,7 +158,7 @@ A new user or contributor finds an "Interactive TUI" section in the README — w
 - **FR-019**: `NO_COLOR` MUST be honored: with it set, the TUI renders without color codes.
 - **FR-020**: The feature MUST include unit tests for banner gradient interpolation, search filtering, mask/unmask state, and lock/unlock transitions, and an integration test asserting bare `envy` with piped stdout prints help with no ANSI escapes.
 - **FR-021**: The README MUST gain an "Interactive TUI" section (launch conditions, hotkey table, silent-execution rules) and MUST embed the rendered demo (`docs/assets/tui-demo.gif`). Feature documentation lives under `specs/016-interactive-tui/` only — no duplicate copy under `docs/features/`. *(Amended 2026-09-03: the `docs/features/` requirement was removed — the assumed repo convention does not exist and the duplicate had already gone stale.)*
-- **FR-022**: TUI sync MUST resolve `envy.enc` from the discovered manifest directory, not process cwd, so nested-project and subdirectory launches target the same artifact as plain CLI commands.
+- **FR-022**: TUI sync MUST resolve `envy.enc` from the active project's own manifest directory (per-project artifact paths, FR-061), never from a single launch-wide path, so operations on any sidebar project target the same artifact as plain CLI commands.
 - **FR-023**: TUI sync MUST update sync markers only after artifact write succeeds; failed writes MUST NOT report the environment as in sync.
 - **FR-024**: The active search query MUST be visible while search is active, and remain visible when filtered results are shown.
 - **FR-025**: The secrets table MUST display each secret's last-updated timestamp. Revealed values MUST be borrowed directly from `Zeroizing<String>` state for rendering, with no additional plaintext copy in TUI state.
@@ -166,7 +166,7 @@ A new user or contributor finds an "Interactive TUI" section in the README — w
 - **FR-027**: `X` MUST open a destructive project-delete confirmation showing project name, environment count, and secret count; deletion MUST require typing the exact project name.
 - **FR-028**: Confirmed project deletion MUST cascade through environments and secrets using the core/database deletion path, then select a valid remaining project and refresh the UI.
 - **FR-029**: `?` MUST open a help popup documenting navigation, project selection/deletion, secret CRUD, sync, lock/unlock, and quit controls.
-- **FR-030**: The sidebar MUST show every registered project as a navigable tree; `↑`/`↓` moves through projects and expanded environments, `Enter`/`→` expands or selects, and `←` collapses.
+- **FR-030**: The sidebar MUST show the workspace projects — those whose `envy.toml` manifests sit at or below the launch directory (FR-061) — as a navigable tree; `↑`/`↓` moves through projects and expanded environments, `Enter`/`→` expands or selects, and `←` collapses. When no workspace project is discovered, the sidebar MUST show a clear empty state pointing at `envy init` and the launch-directory scope.
 - **FR-031**: Each visible environment MUST show sync state (`InSync`, modified/needs refresh, or never sealed) and the active environment MUST be visually distinct.
 - **FR-032**: `T` MUST show a status report for the active project, including secret counts, seal state, and stale-secret/refresh information.
 - **FR-033**: `G` MUST show a key-level diff for the active environment between vault and `envy.enc`, without revealing secret values by default.
@@ -187,7 +187,7 @@ A new user or contributor finds an "Interactive TUI" section in the README — w
 - **FR-048**: The passphrase popup title MUST reflect its purpose (Sync / Diff / Import) and the passphrase field MUST render a fixed-width mask that does not reveal the passphrase length.
 - **FR-049**: Cancelling the sync passphrase popup MUST abort the remaining environment sync queue.
 - **FR-050**: The TUI MUST render a three-panel console layout — project tree, secrets table, and a Details inspector column — with the inspector hidden on terminals narrower than 100 columns.
-- **FR-051**: The Details inspector MUST show, for the current selection: project sync summary (in sync / modified / never sealed counts), environment sync state and secret count, or secret key/value/update metadata, plus the artifact location and the actions available on the selection.
+- **FR-051**: The Details inspector MUST show, for the current selection: project sync summary (in sync / modified / never sealed counts), environment sync state and secret count, or secret key/value/update metadata, plus the artifact location — the active project's own workspace-relative path, compacted to fit the panel — and the actions available on the selection.
 - **FR-052**: The bottom edge MUST show two rows: a status row (lock state, active project/environment, latest message, working indicator) and a contextual key legend declaring the keys of the focused panel, so nothing has to be memorized; `?` remains the full-help overlay.
 - **FR-053**: `:` MUST open a searchable command palette listing every TUI action (fuzzy substring match over action labels); every operation MUST be reachable through the palette without memorizing hotkeys.
 - **FR-054**: `S` MUST open a seal-preview confirmation naming the project and every environment that will be written with its secret count, before any passphrase is requested; empty environments MUST be excluded.
@@ -197,6 +197,7 @@ A new user or contributor finds an "Interactive TUI" section in the README — w
 - **FR-058**: Color MUST be functional and semantic: brand violet marks focus/identity only, green marks in-sync, amber marks drift, red marks errors and destructive confirmations, dim gray marks metadata. `NO_COLOR` MUST still render a fully usable UI.
 - **FR-059**: Environment lookups for sync/rotate/mark MUST normalize names (lowercase) against the vault and artifact keys so mixed-case input cannot produce "record not found" or false passphrase mismatches.
 - **FR-060**: Launching the TUI from a project directory MUST focus that project in the tree (resolved from the manifest's project id), falling back to the first vault project when no manifest exists or its project is absent from the vault.
+- **FR-061**: At launch, the TUI MUST discover `envy.toml` manifests walking downward from the launch directory (unbounded depth, `.gitignore` respected, hidden directories skipped) and scope the sidebar to those manifests that map to existing vault rows; each discovered project carries its own artifact path (`manifest_dir/envy.enc`) and rotation threshold. Malformed manifests are skipped; orphan manifests (no vault row) are excluded; discovery happens at launch only.
 
 ### Key Entities *(include if feature involves data)*
 

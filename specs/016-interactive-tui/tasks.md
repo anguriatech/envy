@@ -268,6 +268,7 @@
 
 - [X] T088 [P] [US1] Launch focus: bare `envy` inside a project directory lands on that project (`App::project_index_by_id` + manifest project id in `manifest_context`), regression-tested (FR-060). Found by the VHS demo render landing on the wrong vault row.
 - [X] T089 [P] [US7] Demo tape hardening: throwaway `$HOME` vault (no real data in the GIF, no vault pollution), obviously-fake secret values, removed broken `LoopOffset`, added brand/seal-preview/rotate/copy moments; rendered to `docs/assets/tui-demo.gif` and frame-verified.
+- [X] T090 [US1] Workspace-scoped TUI (fix branch, 0.5.1): `core::discover_projects` (downward `envy.toml` walk, full depth, gitignore-respected, orphan/hidden/malformed filtered, FR-061); per-project `artifact_paths`/`rotation_days` maps replace the single launch-wide `artifact_path` (FR-022); sidebar scoped to workspace projects with wrapped empty state (FR-030); inspector shows per-project compacted artifact label (FR-051); ops (`S`/`G`/`Y`/`R`) resolve the active project's artifact with a clear guard when missing. Verified via unit tests + pyte-replayed pty smokes (nested workspace, orphan filter, picker switch, empty scope).
 
 ---
 

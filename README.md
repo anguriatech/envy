@@ -171,6 +171,12 @@ masked secrets, and an inspector column with sync state and metadata — all wit
 the output contract of existing commands. Launching from a project directory focuses that
 project's entry in the tree.
 
+The TUI is **workspace-scoped**: the tree shows the projects whose `envy.toml` manifests sit
+at or below the directory where you launched `envy` (full depth, `.gitignore` respected), and
+every project carries its own artifact path and rotation threshold. Projects from the rest of
+the vault stay out of the way — launch from your monorepo root or from a single project, and
+only what you can reach gets shown.
+
 | Key | Panel | Action |
 |---|---|---|
 | `↑↓` / `j` `k` | both | Move selection |

@@ -1,6 +1,6 @@
 # envy Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-08-11 (011-envy-diff complete)
+Auto-generated from all feature plans. Last updated: 2026-09-04 (workspace-scoped TUI fix)
 
 ## Active Technologies
 - Rust stable (edition 2024, MSRV 1.85) + `ratatui` 0.29 (new), `crossterm` 0.28 (new direct), `console` 0.15 (new direct), `zeroize`, `clap` (derive) (016-interactive-tui)
@@ -62,6 +62,7 @@ cargo audit
 Rust stable (edition 2024, MSRV 1.85): Follow standard conventions
 
 ## Recent Changes
+- 016-interactive-tui (workspace-scoped fix, 2026-09-04): TUI sidebar now shows only workspace projects — manifests discovered walking downward from the launch directory (full depth, gitignore-respected; `core/discover.rs`, FR-061); per-project artifact paths + rotation thresholds replace the single launch-wide path (FR-022/030/051); ops (`S`/`G`/`Y`/`R`) guard when the active project has no manifest below the launch dir; orphan manifests (no vault row) filtered; wrapped empty state when nothing discovered.
 - 016-interactive-tui (workstation redesign, 2026-09-03): three-panel console (tree | secrets | Details inspector, hidden <100 cols) with contextual per-panel key legend; `:` command palette (every action searchable); seal-preview confirmation; in-TUI rotate flow (`R`, current→new→confirm); seal mismatch recovers in-TUI (no more `envy rotate` dead-end); panel-scoped `Y` (clipboard copy with 30s auto-clear via `arboard` worker thread / import in tree); functional color semantics (violet focus, green sync, amber drift, red errors); env-name normalization in `mark_env_sealed`/`rotate_env`; launch-from-project-dir focuses that project (FR-050–FR-060). New crate: `arboard`.
 - 016-interactive-tui (UX review, 2026-08-12): `Esc` no longer exits the TUI (shows quit hint); scrollable Help/Diff/Status popups; delete/edit popups name the secret; `Y` import confirms before overwriting; locked-state guards with clear message; error statuses highlighted red with project shown in footer; bracketed paste in all inputs; search filter visible in panel title; purpose-specific passphrase popups with fixed mask; sync queue aborted on passphrase cancel. No new crates.
 - 016-interactive-tui: Added `ratatui` 0.29, `crossterm` 0.28, and direct `console` 0.15. SQLite via `rusqlite` (bundled-sqlcipher, existing vault, read/write through `core/` only).

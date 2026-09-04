@@ -6,7 +6,7 @@ mod theme;
 mod ui;
 mod widgets;
 
-use crate::{cli::CliError, db::ProjectId};
+use crate::{cli::CliError, core::ProjectSummary, db::ProjectId};
 use app::{
     App, Focus, Input, PassphrasePurpose, Popup, RotateStage, SidebarEntry, VaultState,
     palette_matches, popup_max_scroll,
@@ -16,6 +16,7 @@ use ratatui::crossterm::ExecutableCommand;
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyModifiers,
 };
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -24,9 +25,10 @@ struct Session {
     vault: Option<crate::db::Vault>,
     key: Option<zeroize::Zeroizing<[u8; 32]>>,
     project_ids: Vec<ProjectId>,
-    artifact_path: PathBuf,
+    launch_dir: PathBuf,
+    artifact_paths: HashMap<String, PathBuf>,
+    rotation_days: HashMap<String, u32>,
     sync_queue: Vec<String>,
-    rotation_reminder_days: u32,
     app: App,
 }
 
@@ -49,31 +51,48 @@ fn close_vault(vault: &mut Option<crate::db::Vault>) {
 pub(super) fn run() -> Result<(), CliError> {
     let (vault, key) = ops::open_vault()?;
     let projects = ops::load_projects(&vault)?;
-    let project_ids = projects.iter().map(|project| project.id.clone()).collect();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let (artifact_path, manifest_project, rotation_reminder_days) = manifest_context(&cwd)?;
-    let artifact_label = artifact_path
-        .parent()
-        .and_then(|parent| parent.file_name())
-        .map(|name| format!("{}/envy.enc", name.to_string_lossy()))
-        .unwrap_or_else(|| "envy.enc".into());
-    let mut app = App::new(projects);
+    // FR-061: the TUI operates on the *workspace* — projects whose manifest
+    // sits at or below the launch directory — so every sidebar entry carries
+    // its own correct artifact path and rotation threshold (FR-022).
+    let workspace = workspace_context(&cwd, &projects);
+    let (manifest_project, _) = manifest_context(&cwd);
+    let workspace_projects: Vec<ProjectSummary> = projects
+        .iter()
+        .filter(|project| workspace.contains_key(project.id.as_str()))
+        .cloned()
+        .collect();
+    let project_ids: Vec<ProjectId> = workspace_projects
+        .iter()
+        .map(|project| project.id.clone())
+        .collect();
+    let mut app = App::new(workspace_projects);
     // Launching bare `envy` inside a project directory should land on that
-    // project, not on whichever row happens to be first in the vault.
+    // project, not on whichever row happens to be first in the vault. A
+    // manifest found *above* the launch directory belongs to a project
+    // outside FR-061 scope and must not shift the (empty) workspace focus.
     if let Some(project_id) = &manifest_project
         && let Some(index) = App::project_index_by_id(&app.projects, project_id)
     {
         app.active_project = index;
     }
-    app.artifact_path = artifact_label;
+    let artifact_paths: HashMap<String, PathBuf> = workspace
+        .iter()
+        .map(|(id, project)| (id.clone(), project.artifact_path.clone()))
+        .collect();
+    let rotation_days: HashMap<String, u32> = workspace
+        .iter()
+        .map(|(id, project)| (id.clone(), project.rotation_reminder_days))
+        .collect();
     let mut session = Session {
         terminal: ratatui::init(),
         vault: Some(vault),
         key: Some(key),
         project_ids,
-        artifact_path,
+        launch_dir: cwd,
+        artifact_paths,
+        rotation_days,
         sync_queue: Vec::new(),
-        rotation_reminder_days,
         app,
     };
     let _ = std::io::stdout().execute(EnableBracketedPaste);
@@ -108,20 +127,69 @@ pub(super) fn run() -> Result<(), CliError> {
     Ok(())
 }
 
-fn manifest_context(cwd: &std::path::Path) -> Result<(PathBuf, Option<String>, u32), CliError> {
+/// The manifest context of the launch directory: the nearest `envy.toml`
+/// found walking upward (used for launch-focus, FR-060) with its rotation
+/// threshold. Returns `(None, 90)` when no manifest exists up to the
+/// filesystem root — the workspace is then whatever discovery (FR-061)
+/// found below the launch directory.
+fn manifest_context(cwd: &std::path::Path) -> (Option<String>, u32) {
     match crate::core::find_manifest(cwd) {
-        Ok((manifest, manifest_dir)) => Ok((
-            super::artifact_path(&manifest_dir),
-            Some(manifest.project_id.clone()),
-            manifest.rotation_reminder_days,
-        )),
-        Err(crate::core::CoreError::ManifestNotFound) => Ok((cwd.join("envy.enc"), None, 90)),
-        Err(error) => Err(CliError::Output(error.to_string())),
+        Ok((manifest, _manifest_dir)) => {
+            (Some(manifest.project_id), manifest.rotation_reminder_days)
+        }
+        Err(_) => (None, 90),
     }
 }
 
+/// Maps downward-discovered manifests (FR-061) to their vault rows. A
+/// manifest whose `project_id` has no vault row — a leftover from tests or
+/// a deleted project — is out of scope for the sidebar.
+fn workspace_context(
+    cwd: &std::path::Path,
+    projects: &[ProjectSummary],
+) -> HashMap<String, crate::core::DiscoveredProject> {
+    crate::core::discover_projects(cwd)
+        .into_iter()
+        .filter(|project| {
+            projects
+                .iter()
+                .any(|row| row.id.as_str() == project.project_id)
+        })
+        .map(|project| (project.project_id.clone(), project))
+        .collect()
+}
+
 impl Session {
+    fn artifact_for(&self, project: &ProjectId) -> Option<PathBuf> {
+        self.artifact_paths.get(project.as_str()).cloned()
+    }
+
+    /// Per-project rotation threshold (FR-022); 90 for projects without a
+    /// parsed manifest — defensive, every workspace project has one.
+    fn rotation_days_for(&self, project: &ProjectId) -> u32 {
+        self.rotation_days
+            .get(project.as_str())
+            .copied()
+            .unwrap_or(90)
+    }
+
     fn load_active_project(&mut self) -> Result<(), CliError> {
+        // FR-022: the inspector shows the active project's own artifact —
+        // relative to the launch directory — not a single launch-wide path.
+        let artifact_label = self
+            .project_ids
+            .get(self.app.active_project)
+            .and_then(|project| self.artifact_for(project))
+            .map(|artifact| {
+                let manifest_dir = artifact.parent().unwrap_or(&artifact);
+                match manifest_dir.strip_prefix(&self.launch_dir) {
+                    Ok(relative) if relative.as_os_str().is_empty() => "envy.enc".to_string(),
+                    Ok(relative) => format!("{}/envy.enc", relative.display()),
+                    Err(_) => artifact.display().to_string(),
+                }
+            })
+            .unwrap_or_default();
+        self.app.artifact_path = artifact_label;
         if self.app.vault_state == VaultState::Locked {
             return Ok(());
         }
@@ -132,7 +200,7 @@ impl Session {
         if let Some(project_id) = self.project_ids.get(self.app.active_project).cloned() {
             let environments = ops::load_environments(vault, &project_id)?;
             let statuses: Vec<crate::core::SyncStatus> =
-                ops::status_report(vault, &project_id, self.rotation_reminder_days)?
+                ops::status_report(vault, &project_id, self.rotation_days_for(&project_id))?
                     .into_iter()
                     .map(|row| row.sync_status)
                     .collect();
@@ -1005,13 +1073,19 @@ impl Session {
                             restore(&mut self.app);
                             return Ok(false);
                         };
+                        let Some(artifact) = self.artifact_for(&project) else {
+                            self.app
+                                .fail("This project has no envy.toml below the launch directory");
+                            restore(&mut self.app);
+                            return Ok(false);
+                        };
                         let result = self.with_unlocked(|vault, key| {
                             ops::rotate_environment(
                                 vault,
                                 key,
                                 &project,
                                 &environment,
-                                &self.artifact_path,
+                                &artifact,
                                 current.as_str(),
                                 new_pass.as_str(),
                             )
@@ -1027,7 +1101,7 @@ impl Session {
                                         ops::status_report(
                                             vault,
                                             &project,
-                                            self.rotation_reminder_days,
+                                            self.rotation_days_for(&project),
                                         )?
                                         .into_iter()
                                         .map(|row| row.sync_status)
@@ -1235,15 +1309,14 @@ impl Session {
             self.app.fail("Master key is unavailable");
             return Ok(());
         };
+        let Some(artifact) = self.artifact_for(&project) else {
+            self.app
+                .fail("This project has no envy.toml below the launch directory");
+            return Ok(());
+        };
         self.app.working = true;
-        let result = ops::sync_environment(
-            vault,
-            key,
-            &project,
-            environment,
-            passphrase,
-            &self.artifact_path,
-        );
+        let result =
+            ops::sync_environment(vault, key, &project, environment, passphrase, &artifact);
         self.app.working = false;
         let succeeded = result.is_ok();
         match result {
@@ -1256,7 +1329,7 @@ impl Session {
                 .as_ref()
                 .ok_or_else(|| CliError::VaultOpen("vault is locked".into()))?;
             let statuses: Vec<crate::core::SyncStatus> =
-                ops::status_report(vault, &project, self.rotation_reminder_days)?
+                ops::status_report(vault, &project, self.rotation_days_for(&project))?
                     .into_iter()
                     .map(|row| row.sync_status)
                     .collect();
@@ -1289,7 +1362,13 @@ impl Session {
             .vault
             .as_ref()
             .ok_or_else(|| CliError::VaultOpen("vault is locked".into()))?;
-        self.app.projects = ops::load_projects(vault)?;
+        // FR-061: the sidebar stays scoped to the workspace — a deleted
+        // project simply leaves it, newly *discovered* projects require a
+        // relaunch (discovery is launch-time only).
+        self.app.projects = ops::load_projects(vault)?
+            .into_iter()
+            .filter(|project| self.artifact_paths.contains_key(project.id.as_str()))
+            .collect();
         self.project_ids = self
             .app
             .projects
@@ -1393,7 +1472,7 @@ impl Session {
             .as_ref()
             .ok_or_else(|| CliError::VaultOpen("vault is locked".into()))?;
         let statuses: Vec<crate::core::SyncStatus> =
-            ops::status_report(vault, &project, self.rotation_reminder_days)?
+            ops::status_report(vault, &project, self.rotation_days_for(&project))?
                 .into_iter()
                 .map(|row| row.sync_status)
                 .collect();
@@ -1413,7 +1492,7 @@ impl Session {
             .vault
             .as_ref()
             .ok_or_else(|| CliError::VaultOpen("vault is locked".into()))?;
-        let rows = ops::status_report(vault, &project, self.rotation_reminder_days)?;
+        let rows = ops::status_report(vault, &project, self.rotation_days_for(&project))?;
         let mut text = format!(
             "Status for {}\n\n",
             self.app.projects[self.app.active_project].name
@@ -1436,7 +1515,7 @@ impl Session {
             if !row.stale_secrets.is_empty() {
                 text.push_str(&format!(
                     "    stale (>{}d): {}\n",
-                    self.rotation_reminder_days,
+                    self.rotation_days_for(&project),
                     row.stale_secrets.join(", ")
                 ));
             }
@@ -1484,15 +1563,13 @@ impl Session {
             .get(self.app.active_project)
             .cloned()
             .ok_or_else(|| CliError::Output("Select a project first".into()))?;
+        let Some(artifact) = self.artifact_for(&project) else {
+            self.app
+                .fail("This project has no envy.toml below the launch directory");
+            return Ok(());
+        };
         let text = self.with_unlocked(|vault, key| {
-            ops::env_diff(
-                vault,
-                key,
-                &project,
-                environment,
-                &self.artifact_path,
-                passphrase,
-            )
+            ops::env_diff(vault, key, &project, environment, &artifact, passphrase)
         })?;
         self.app.popup = Some(Popup::Diff { text, scroll: 0 });
         Ok(())
@@ -1542,15 +1619,13 @@ impl Session {
             .get(self.app.active_project)
             .cloned()
             .ok_or_else(|| CliError::Output("Select a project first".into()))?;
+        let Some(artifact) = self.artifact_for(&project) else {
+            self.app
+                .fail("This project has no envy.toml below the launch directory");
+            return Ok(());
+        };
         let count = self.with_unlocked(|vault, key| {
-            ops::decrypt_env(
-                vault,
-                key,
-                &project,
-                environment,
-                &self.artifact_path,
-                passphrase,
-            )
+            ops::decrypt_env(vault, key, &project, environment, &artifact, passphrase)
         })?;
         self.app
             .note(format!("Imported {count} secrets from envy.enc"));
@@ -1592,15 +1667,61 @@ mod tests {
     }
 
     #[test]
-    fn artifact_path_uses_project_root_from_nested_directory() {
+    fn manifest_context_resolves_nearest_manifest_from_nested_directory() {
         let temp = tempfile::tempdir().expect("temp directory");
         let root = temp.path();
         std::fs::write(root.join("envy.toml"), "project_id = \"test\"\n").expect("manifest");
         let nested = root.join("src").join("nested");
         std::fs::create_dir_all(&nested).expect("nested directory");
-        assert_eq!(
-            manifest_context(&nested).expect("manifest context").0,
-            root.join("envy.enc")
-        );
+        assert_eq!(manifest_context(&nested).0.as_deref(), Some("test"));
+        assert_eq!(manifest_context(&nested).1, 90);
+    }
+
+    #[test]
+    fn manifest_context_falls_back_without_manifest() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        assert_eq!(manifest_context(temp.path()).0, None);
+        assert_eq!(manifest_context(temp.path()).1, 90);
+    }
+
+    #[test]
+    fn workspace_context_scopes_discovery_to_vault_rows() {
+        use crate::core::{ProjectSummary, create_manifest};
+        use crate::db::ProjectId;
+        let temp = tempfile::tempdir().expect("temp directory");
+        let cwd = temp.path();
+        let live = cwd.join("live");
+        std::fs::create_dir(&live).expect("create dir");
+        create_manifest(&live, "live-id").expect("manifest");
+        // Discovered, but no vault row — must be filtered out.
+        let orphan = cwd.join("orphan");
+        std::fs::create_dir(&orphan).expect("create dir");
+        create_manifest(&orphan, "orphan-id").expect("manifest");
+        let rows = vec![ProjectSummary {
+            id: ProjectId("live-id".into()),
+            name: "live".into(),
+        }];
+
+        let workspace = workspace_context(cwd, &rows);
+        assert_eq!(workspace.len(), 1);
+        assert_eq!(workspace["live-id"].manifest_dir, live);
+        assert_eq!(workspace["live-id"].artifact_path, live.join("envy.enc"));
+    }
+
+    #[test]
+    fn workspace_context_requires_manifest_below_launch_dir() {
+        use crate::core::{ProjectSummary, create_manifest};
+        use crate::db::ProjectId;
+        let temp = tempfile::tempdir().expect("temp directory");
+        // A manifest *above* the launch directory is out of FR-061 scope.
+        create_manifest(temp.path(), "above-id").expect("manifest");
+        let cwd = temp.path().join("sub");
+        std::fs::create_dir(&cwd).expect("create dir");
+        let rows = vec![ProjectSummary {
+            id: ProjectId("above-id".into()),
+            name: "above".into(),
+        }];
+
+        assert!(workspace_context(&cwd, &rows).is_empty());
     }
 }
