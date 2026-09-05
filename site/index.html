@@ -26,9 +26,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>envy: encrypted env vars that live in your Git history</title>
+<title>envy — encrypted env vars that live in your Git history</title>
 <meta name="description" content="envy keeps secrets in an encrypted local vault and shares them by committing sealed ciphertext to the repo. No SaaS, no tokens, no plaintext. MIT, Rust.">
-<meta property="og:title" content="envy: the commit is the distribution">
+<meta property="og:title" content="envy — the commit is the distribution">
 <meta property="og:description" content="Encrypted env vars you can safely commit. Per-environment passphrases, a terminal workstation, zero network.">
 <meta property="og:url" content="https://anguriatech.github.io/envy/">
 <meta property="og:image" content="https://anguriatech.github.io/envy/tui-demo.gif">
@@ -42,7 +42,7 @@
   :root{
     --bg:#0d0716; --bg-raise:#150c24; --bg-sink:#0a0512;
     --line:#2a1b45; --line-soft:#1d1233;
-    --ink:#ece7f8; --ink-2:#b1a5d6; --ink-3:#9184bb;
+    --ink:#ece7f8; --ink-2:#b1a5d6; --ink-3:#7f71a8;
     --violet:#8a2be2; --violet-2:#7b68ee;
     --green:#4cc38a; --amber:#d8a13a; --red:#f26155;
     --font-display:"Bricolage Grotesque",sans-serif;
@@ -52,7 +52,7 @@
     --measure:68ch;
   }
   *{box-sizing:border-box;margin:0}
-  
+  @media(prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
   body{
     background:var(--bg);color:var(--ink);
     font:400 17px/1.65 var(--font-body);
@@ -97,16 +97,15 @@
     transition:border-color .18s,background .18s,transform .18s;
   }
   .btn:hover{border-color:var(--violet);text-decoration:none;transform:translateY(-1px)}
-  .btn.primary{background:var(--violet);border-color:transparent;font-weight:600}
+  .btn.primary{background:linear-gradient(135deg,var(--violet),var(--violet-2));border-color:transparent;font-weight:600}
   .btn.primary:hover{filter:brightness(1.12)}
 
   /* hero console */
-  .hero{position:relative;padding:0 clamp(10px,1.6vw,22px);height:100svh;display:flex;flex-direction:column;min-height:640px}
-  @media(max-width:900px){.hero{height:auto;min-height:0}}
+  .hero{position:relative;padding:0 var(--pad)}
   .console{
     border:1px solid var(--line);border-radius:14px;overflow:hidden;
     background:var(--bg-sink);
-    box-shadow:0 24px 70px -28px rgba(0,0,0,.75),0 4px 18px rgba(0,0,0,.5);
+    box-shadow:0 24px 80px -24px rgba(138,43,226,.28),0 4px 18px rgba(0,0,0,.5);
     margin-top:76px;
   }
   .console-bar{
@@ -118,13 +117,12 @@
   .console-bar i:nth-child(2){background:#d8a13a}
   .console-bar i:nth-child(3){background:#4cc38a}
   .console-bar span{margin-left:10px;font:500 13px var(--font-code);color:var(--ink-3)}
-  .console{flex:1;min-height:0;display:flex;flex-direction:column}
-  .console-shot{flex:1;min-height:0;position:relative;overflow:hidden}
-  .console-shot img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center top}
+  .console-bar .live{margin-left:auto;color:var(--green);font-size:12.5px;display:flex;align-items:center;gap:6px}
+  .console-bar .live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+  .console img{display:block;width:100%;height:auto}
   .panel-legend{
     display:grid;grid-template-columns:1fr 1.72fr 1fr;gap:0;
     border-top:1px solid var(--line-soft);
-    background:color-mix(in srgb,var(--bg-raise) 90%,transparent);
   }
   .panel-legend div{
     padding:12px 18px;font:500 13px var(--font-code);color:var(--ink-2);
@@ -135,13 +133,7 @@
   .panel-legend i{font-style:normal;color:var(--ink-3);font-size:12px}
   @media(max-width:900px){.panel-legend{grid-template-columns:1fr}.panel-legend div{border-right:0;border-bottom:1px solid var(--line-soft)}}
 
-  .hero-copy{position:absolute;z-index:5;top:86px;left:var(--pad);max-width:640px;
-    padding:22px 26px;border-radius:14px;
-    background:linear-gradient(160deg,color-mix(in srgb,var(--bg) 94%,transparent) 0%,color-mix(in srgb,var(--bg) 88%,transparent) 55%,color-mix(in srgb,var(--bg) 62%,transparent) 100%);
-    backdrop-filter:blur(8px)}
-  .hero-lede{max-width:1180px;margin:0 auto;padding:0 var(--pad)}
-  @media(min-width:900px){.hero-lede{padding-left:calc(var(--pad) + 0px)}}
-  @media(max-width:900px){.hero-copy{position:static;margin:64px 0 18px;padding:0;background:none;backdrop-filter:none}}
+  .hero-copy{position:relative;margin-top:56px;max-width:1180px;margin-inline:auto}
   .hero-copy .wordmark-big{
     display:inline-block;font-family:var(--font-display);font-weight:800;
     font-size:clamp(40px,6.4vw,86px);letter-spacing:-0.03em;line-height:.98;
@@ -202,7 +194,7 @@
 
   /* compare table */
   .tbl-scroll{overflow-x:auto;border:1px solid var(--line);border-radius:12px}
-  table{border-collapse:collapse;width:100%;min-width:680px;font-size:14.5px}
+  table{border-collapse:collapse;width:100%;min-width:760px;font-size:14.5px}
   th,td{padding:13px 18px;text-align:left;border-bottom:1px solid var(--line-soft)}
   thead th{
     font:500 12.5px var(--font-code);letter-spacing:.06em;text-transform:uppercase;
@@ -216,8 +208,6 @@
   tr.ours td:first-child{color:var(--ink)}
   tr:last-child td,tr:last-child th{border-bottom:0}
   .tbl-note{font-size:13px;color:var(--ink-3);margin-top:12px}
-  .scroll-hint{display:none;font:500 12px var(--font-code);color:var(--ink-3);margin:0 0 10px}
-  @media(max-width:720px){.scroll-hint{display:block}}
 
   /* faq */
   details{
@@ -247,7 +237,6 @@
 
   /* motion: one authored boot moment */
   @media(prefers-reduced-motion:no-preference){
-    html{scroll-behavior:smooth}
     .boot{opacity:0;transform:translateY(10px);filter:blur(5px);
       animation:boot .7s cubic-bezier(.16,1,.3,1) forwards}
     .boot.d1{animation-delay:.05s}.boot.d2{animation-delay:.16s}.boot.d3{animation-delay:.28s}
@@ -265,30 +254,32 @@
     <a href="#compare">Compare</a>
     <a href="#install">Install</a>
     <a href="#faq">FAQ</a>
-    <a class="keep" href="https://github.com/anguriatech/envy" style="display:inline-flex;align-items:center;gap:6px">GitHub<svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M3 9L9 3M9 3H4.5M9 3V7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+    <a class="keep" href="https://github.com/anguriatech/envy">GitHub&nbsp;↗</a>
   </div>
 </nav>
 
 <!-- HERO: the workstation is the page -->
 <header class="hero" id="top">
-  <div class="hero-copy boot d1">
-    <span class="wordmark-big"><em>envy</em></span>
-    <h1>The commit is the distribution.</h1>
+  <div class="hero-copy wrap">
+    <span class="wordmark-big boot d1">env<em>y</em></span>
+    <h1 class="boot d1">The commit is the distribution.</h1>
+    <p class="lede boot d2">
+      envy keeps your secrets in an encrypted local vault and shares them by committing
+      sealed ciphertext straight into the repo. No SaaS, no tokens, no plaintext — and no
+      network, because the binary has no network stack at all.
+    </p>
   </div>
 
   <div class="console boot d2">
     <div class="console-bar">
       <i></i><i></i><i></i>
-      <span>envy — ~/anguria/envy-project</span>
+      <span>envy — ~/projects/demo</span>
+      <span class="live">vault unlocked</span>
     </div>
-    <!-- tui-demo.gif: crop of docs/assets/tui-demo.gif (VHS window bar removed, 50px top) -->
-    <div class="console-shot">
-    <!-- tui-demo.gif: crop of docs/assets/tui-demo.gif (VHS window bar removed, 50px top) -->
-    <img src="tui-demo.gif" alt="The envy terminal workstation: a project tree, masked secrets, and a details inspector, with a command palette opening">
-    </div>
+    <img src="tui-demo.gif" width="1200" height="653" alt="The envy terminal workstation: a project tree, masked secrets, and a details inspector, with a command palette opening">
     <div class="panel-legend">
       <div><b>project tree</b><i>workspace-scoped</i></div>
-      <div><b>secrets</b><i>masked; reveal or copy on demand</i></div>
+      <div><b>secrets</b><i>masked — reveal or copy on demand</i></div>
       <div><b>details</b><i>sync state, artifact, actions</i></div>
     </div>
   </div>
@@ -302,12 +293,6 @@
 </header>
 
 <main>
-<p class="lede hero-lede boot d2">
-    envy keeps your secrets in an encrypted local vault and shares them by committing
-    sealed ciphertext straight into the repo. No SaaS, no tokens, no plaintext. The binary
-    carries no network stack at all: it never phones home.
-  </p>
-
 
 <!-- TOUR: what the console just showed, in product terms -->
 <section id="tour" class="more-above">
@@ -320,22 +305,22 @@
     <div class="features">
       <div class="frow">
         <h3>Encrypted vault<span class="k">~/.envy/vault.db · SQLCipher</span></h3>
-        <p>Secrets live in a database encrypted at rest, file <b>and</b> values, with the master
+        <p>Secrets live in a database encrypted at rest — file <b>and</b> values — with the master
         key in your OS keychain. Plaintext touches disk only when you explicitly ask for an
         import. Editing, listing, and diffing all work without it.</p>
       </div>
       <div class="frow">
         <h3>Sealed artifact<span class="k">envy.enc · commit it</span></h3>
         <p><code style="font-family:var(--font-code)">envy encrypt</code> seals every environment into
-        <b>pure ciphertext</b>: Argon2id-derived keys, fresh nonce per envelope, in one file you
+        <b>pure ciphertext</b> — Argon2id-derived keys, fresh nonce per envelope — in one file you
         commit like any other. Teammates pull the repo and decrypt with the environment
         passphrase. The commit is the distribution.</p>
       </div>
       <div class="frow">
         <h3>Partial access, by design<span class="k">one passphrase per environment</span></h3>
         <p>Junior devs hold <b>development</b>; production stays sealed until someone with the
-        passphrase runs the deploy. No ACL system to operate, no accounts to provision. The access boundary is the passphrase you chose per
-        environment.</p>
+        passphrase runs the deploy. No ACL system to operate, no accounts to provision —
+        the access boundary is the passphrase you chose per environment.</p>
       </div>
       <div class="frow">
         <h3>Headless for CI<span class="k">ENVY_PASSPHRASE_PRODUCTION=…</span></h3>
@@ -346,12 +331,12 @@
       <div class="frow">
         <h3>Rotation with receipts<span class="k">staleness tracked per project</span></h3>
         <p>Configure a threshold per project; the inspector flags secrets past it.
-        Rotate a passphrase in place (current, new, confirm) and re-seal in one
+        Rotate a passphrase in place — current, new, confirm — and re-seal in one
         flow, with the mismatch case recoverable instead of fatal.</p>
       </div>
       <div class="frow">
         <h3>Leak sweep<span class="k">envy scan</span></h3>
-        <p>Scan working trees for values that escaped the vault, before they escape into a
+        <p>Scan working trees for values that escaped the vault — before they escape into a
         public push.</p>
       </div>
     </div>
@@ -364,16 +349,16 @@
     <h2>Security you can verify, not vibes</h2>
     <p class="lede" style="margin-bottom:30px">
       The crypto surface is four modules of Rust. Every claim below is checkable in the
-      repository, starting with the dependency list: you will find no HTTP client, because
-      envy never phones home.
+      repository — starting with the dependency list, where you will find no HTTP client,
+      because envy never phones home.
     </p>
     <ul class="sec-list">
-      <li><b>Argon2id</b> key derivation: 64&nbsp;MiB memory, t=3, p=4: memory-hard on purpose</li>
+      <li><b>Argon2id</b> key derivation — 64&nbsp;MiB memory, t=3, p=4: memory-hard on purpose</li>
       <li><b>AES-256-GCM</b> envelopes with a fresh nonce for every secret, every seal</li>
-      <li><b>SQLCipher</b> vault: the whole database file encrypted at rest, metadata included</li>
-      <li><b>zeroize</b> on drop: secret buffers scrubbed from memory when done</li>
+      <li><b>SQLCipher</b> vault — the whole database file encrypted at rest, metadata included</li>
+      <li><b>zeroize</b> on drop — secret buffers scrubbed from memory when done</li>
       <li><b>Constant-time</b> base64 encoding on the artifact path</li>
-      <li><b>MIT licensed</b>: read it, fork it, audit it; no telemetry exists to disable</li>
+      <li><b>MIT licensed</b> — read it, fork it, audit it; no telemetry exists to disable</li>
     </ul>
   </div>
 </section>
@@ -383,10 +368,9 @@
   <div class="wrap">
     <h2>Where envy sits</h2>
     <p class="lede" style="margin-bottom:30px">
-      Honest version: these are good tools. envy wins a specific niche: teams who live in Git and
-      refuse to operate secret infrastructure.
+      Honest version: these are good tools. envy wins a specific niche — teams who live in Git
+      and refuse to operate secret infrastructure.
     </p>
-    <p class="scroll-hint">table scrolls sideways →</p>
     <div class="tbl-scroll">
       <table>
         <thead>
@@ -394,7 +378,7 @@
         </thead>
         <tbody>
           <tr class="ours">
-            <th>Storage model</th>
+            <th>envy</th>
             <td class="yes">vault + sealed artifact in Git</td>
             <td>values encrypted in config files</td>
             <td>encrypted .env file</td>
@@ -411,7 +395,7 @@
       </table>
     </div>
     <p class="tbl-note">Need central revocation, audit dashboards, or dynamic secrets? Use the
-    server-backed tools; envy says so itself. Below that scale, envy is the workflow that
+    server-backed tools — envy says so itself. Below that scale, envy is the workflow that
     actually ships.</p>
   </div>
 </section>
@@ -424,18 +408,18 @@
     <div class="features">
       <div class="frow">
         <h3>Cargo<span class="k">Rust toolchain</span></h3>
-        <p><code style="font-family:var(--font-code)">cargo install envy-secrets</code>, published on
+        <p><code style="font-family:var(--font-code)">cargo install envy-secrets</code> — published on
         crates.io as <b>envy-secrets</b> because the plain name was taken; the installed command
         is <b>envy</b>.</p>
       </div>
       <div class="frow">
         <h3>Homebrew<span class="k">macOS & Linux</span></h3>
-        <p><code style="font-family:var(--font-code)">brew install anguriatech/tap/envy</code>; formula
+        <p><code style="font-family:var(--font-code)">brew install anguriatech/tap/envy</code> — formula
         updated automatically on every release.</p>
       </div>
       <div class="frow">
         <h3>npm<span class="k">cross-platform wrapper</span></h3>
-        <p><code style="font-family:var(--font-code)">npm install -g @anguriatech/envy</code>, or try it
+        <p><code style="font-family:var(--font-code)">npm install -g @anguriatech/envy</code> — or try it
         without installing: <code style="font-family:var(--font-code)">npx @anguriatech/envy</code>.</p>
       </div>
       <div class="frow">
@@ -459,7 +443,7 @@
     <h2>Questions we expect</h2>
     <details>
       <summary>Why not sops?</summary>
-      <div class="a"><p>sops is excellent: for config files. envy is built around the
+      <div class="a"><p>sops is excellent — for config files. envy is built around the
       environment: a real vault with CRUD, sync-state tracking, and staleness flags, per-env
       passphrases so the intern holds <code>development</code> and never <code>production</code>, and a
       run/inject wrapper. sops decrypts to your editor; envy keeps values off disk unless you
@@ -467,7 +451,7 @@
     </details>
     <details>
       <summary>What stops someone brute-forcing the committed artifact?</summary>
-      <div class="a"><p>Argon2id with 64&nbsp;MiB of memory per derivation (memory-hard on purpose)
+      <div class="a"><p>Argon2id with 64&nbsp;MiB of memory per derivation — memory-hard on purpose —
       under AES-256-GCM. The honest limit: passphrase strength is the system's strength. envy
       mitigates with per-environment separation (a leaked dev passphrase never exposes prod)
       and cheap rotation, but a weak passphrase on a committed artifact is still a weak
@@ -476,21 +460,21 @@
     <details>
       <summary>Why is the master key in the OS keychain safe?</summary>
       <div class="a"><p>The same trust point as ssh-agent and browser-saved passwords. The
-      alternative, a keyfile on disk, is strictly worse. Compromised machine beats every
+      alternative — a keyfile on disk — is strictly worse. Compromised machine beats every
       local-first tool, ours included; the committed artifact stays sealed regardless.</p></div>
     </details>
     <details>
       <summary>Does rotation give forward secrecy?</summary>
       <div class="a"><p>No, and we don't pretend otherwise: old ciphertext in Git history stays
       decryptable with the old passphrase. If a passphrase leaks, rotate it, re-seal, and
-      rotate the external secret values too; envy tracks staleness so this gets flagged, but
+      rotate the external secret values too — envy tracks staleness so this gets flagged, but
       no tool can rotate your Stripe key for you.</p></div>
     </details>
     <details>
       <summary>Why trust a young project with my secrets?</summary>
       <div class="a"><p>Because the surface is small and local: no network dependency to audit,
       four crypto modules, MIT, and a design that assumes you will read it. Don't trust the
-      star count: audit the code, or wait for the external review we want to fund. That's
+      star count — audit the code, or wait for the external review we want to fund. That's
       the honest answer for any young tool in this category.</p></div>
     </details>
   </div>
@@ -500,7 +484,7 @@
 
 <footer>
   <span class="wm">envy</span>
-  <span>Built by <a href="https://www.anguria.tech">Anguria</a>, a three-person collective.</span>
+  <span>Built in Rust. MIT licensed.</span>
   <span class="sp"></span>
   <a href="https://github.com/anguriatech/envy">GitHub</a>
   <a href="https://github.com/anguriatech/envy/releases/latest">Releases</a>
