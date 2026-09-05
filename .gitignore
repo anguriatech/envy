@@ -40,3 +40,7 @@ Thumbs.db
 .specify/workflows/
 .specify/scripts/bash/setup-tasks.sh
 .specify/feature.json
+
+# impeccable design workspace (per-developer)
+.impeccable/
+.playwright-mcp/
