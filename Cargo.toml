@@ -25,6 +25,7 @@ exclude = [
     ".gitignore",
     "demo.tape",
     "dist-workspace.toml",
+    "site",
 ]
 
 # The published package is `envy-secrets` (the crate name `envy` is taken on
