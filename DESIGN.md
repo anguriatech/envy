@@ -206,7 +206,7 @@ The form language will be rounded-rectangular and quietly terminal: 14px on larg
 - Native `details` elements, hairline dividers, 17px Bricolage summaries, plus glyph rotating 45 degrees when open. Answers held to the 68ch measure with chip-style inline code on raised.
 
 ### Footer
-- Hairline top border, flex row wrapping at 18px 40px gaps, ink 3 meta text with the display wordmark leading. The footer will state product facts (language, license) and repo links only - it will not carry team identity, company links, or origin stories.
+- Hairline top border, flex row wrapping at 18px 40px gaps. A stacked meta block leads on the left (display wordmark, plain-text "Developed by Anguria." credit, product facts line, each its own line); repo links follow as one row on the right (below the meta block on small screens, where the spacer span takes a full flex-basis). The footer will state the credit, product facts (language, license), and repo links only - no external company links, no team-size claims, no origin stories.
 
 ## Do's and Don'ts
 
@@ -217,6 +217,7 @@ The form language will be rounded-rectangular and quietly terminal: 14px on larg
 - **Do** wrap any new animation inside the existing `@media (prefers-reduced-motion: no-preference)` block alongside the boot reveal and smooth scroll. Nothing outside that gate will animate.
 - **Do** keep table columns at full width inside the scroll container and extend the scroll when columns grow.
 - **Do** set all terminal, code, and data text in Fira Code, per the Product's Face Rule.
+- **Do** allow inline code inside prose to break anywhere so long URLs never widen the page on small screens; the install-bar command stays whole.
 - **Do** keep copy plain and honest: concrete numbers, admitted limits, no marketing gloss.
 
 ### Don't:
@@ -226,7 +227,7 @@ The form language will be rounded-rectangular and quietly terminal: 14px on larg
 - **Don't** add a second surface reporting the same state; each state will speak through one channel: the live label for vault state, the copy button's green flip, the table verdict classes. No badges, toasts, or duplicate indicators.
 - **Don't** ship un-gated motion, new shadows, or new status colors.
 - **Don't** rebuild the console chrome or legend as images; they will stay drawn in markup so they never fight the recording's compression.
-- **Don't** put team, company, or people claims in the footer or anywhere else; the page sells the product, and identity lives in the repo.
+- **Don't** link to external company sites or mention team size anywhere; the plain-text "Developed by Anguria." credit in the footer is the only identity claim the page makes.
 
 ---
 
