@@ -66,6 +66,7 @@
   a:hover{color:var(--ink);text-decoration:underline}
   :focus-visible{outline:2px solid var(--violet-2);outline-offset:3px;border-radius:4px}
   code,pre{font-family:var(--font-code);font-size:.92em}
+  p code,.a code,.frow code{overflow-wrap:anywhere}
   h1,h2,h3{font-family:var(--font-display);letter-spacing:-0.02em;line-height:1.05;text-wrap:balance}
   h2{font-size:clamp(28px,4vw,44px);font-weight:700;margin:0 0 .4em}
   section{padding:clamp(56px,9vw,120px) var(--pad) 0}
@@ -230,10 +231,12 @@
     display:flex;flex-wrap:wrap;gap:18px 40px;align-items:center;
     color:var(--ink-3);font-size:14px;
   }
+  footer .meta{display:flex;flex-direction:column;gap:6px}
   footer .wm{font-family:var(--font-display);font-weight:800;color:var(--ink-2);letter-spacing:.02em}
   footer .sp{flex:1}
   footer a{color:var(--ink-2)}
   footer a:hover{color:var(--ink)}
+  @media(max-width:720px){footer .sp{flex-basis:100%}}
 
   /* motion: one authored boot moment */
   @media(prefers-reduced-motion:no-preference){
@@ -483,8 +486,11 @@
 </main>
 
 <footer>
-  <span class="wm">envy</span>
-  <span>Built in Rust. MIT licensed.</span>
+  <div class="meta">
+    <span class="wm">envy</span>
+    <span>Developed by Anguria.</span>
+    <span>Built in Rust. MIT licensed.</span>
+  </div>
   <span class="sp"></span>
   <a href="https://github.com/anguriatech/envy">GitHub</a>
   <a href="https://github.com/anguriatech/envy/releases/latest">Releases</a>
