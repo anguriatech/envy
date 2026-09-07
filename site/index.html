@@ -168,6 +168,29 @@
   .copy:hover{border-color:var(--violet)}
   .copy.done{border-color:var(--green);color:var(--green)}
 
+  /* hero mode toggle: TUI vs CLI */
+  .seg{display:inline-flex;gap:3px;padding:3px;background:var(--bg-raise);border:1px solid var(--line);border-radius:10px}
+  .seg[hidden]{display:none}
+  .seg button{border:0;background:transparent;color:var(--ink-3);font:600 13.5px var(--font-body);padding:5px 14px;border-radius:8px;cursor:pointer;transition:color .15s,background .15s}
+  .seg button:hover{color:var(--ink)}
+  .seg button[aria-pressed="true"]{background:var(--violet);color:#fff}
+  .seg button[aria-pressed="true"]:hover{color:#fff}
+  .console-bar .seg{margin-left:auto}
+  .console-bar .copy{padding:5px 12px;font-size:12.5px}
+  .console[data-mode="cli"] .live{display:none}
+  .console[data-mode="tui"] .copy-cmd{display:none}
+  .console[data-mode="cli"] .mode-tui{display:none}
+  .console[data-mode="tui"] .mode-cli{display:none}
+  .console .mode-cli .term-scroll{overflow-x:auto}
+  .console .mode-cli pre{margin:0;padding:22px 24px;font:400 13.5px/1.8 var(--font-code);color:var(--ink)}
+  .console .p{color:var(--violet-2);font-weight:500;user-select:none}
+  .console .c{color:var(--ink-3)}
+  .console .o{color:var(--ink-2)}
+  .ref-link{margin:12px 2px 0;text-align:right;font:500 13px var(--font-code)}
+  .ref-link a{color:var(--violet-2)}
+  .ref-link a:hover{color:var(--ink)}
+  @media(max-width:760px){.console .mode-cli pre{font-size:12.5px;padding:16px}}
+
   /* editorial feature rows */
   .features{border-top:1px solid var(--line-soft)}
   .frow{
@@ -273,19 +296,64 @@
     </p>
   </div>
 
-  <div class="console boot d2">
+  <div class="console boot d2" id="console" data-mode="tui">
     <div class="console-bar">
       <i></i><i></i><i></i>
       <span>envy — ~/projects/demo</span>
+      <div class="seg" hidden>
+        <button type="button" data-show="tui" aria-pressed="true">TUI</button>
+        <button type="button" data-show="cli" aria-pressed="false">CLI</button>
+      </div>
+      <button class="copy copy-cmd" data-copy="envy init
+envy set DATABASE_URL=postgres://localhost/app
+envy set API_KEY=9f8dK2mQpT3vW7yB2nR4cJ6fL8hG0X4zR1t
+envy encrypt
+envy status
+envy run -- ./app">Copy</button>
       <span class="live">vault unlocked</span>
     </div>
-    <img src="tui-demo.gif" width="1200" height="653" alt="The envy terminal workstation: a project tree, masked secrets, and a details inspector, with a command palette opening">
-    <div class="panel-legend">
-      <div><b>project tree</b><i>workspace-scoped</i></div>
-      <div><b>secrets</b><i>masked — reveal or copy on demand</i></div>
-      <div><b>details</b><i>sync state, artifact, actions</i></div>
+    <div class="mode-tui">
+      <img src="tui-demo.gif" width="1200" height="640" alt="The envy terminal workstation: a project tree, masked secrets, and a details inspector, with a command palette opening">
+      <div class="panel-legend">
+        <div><b>project tree</b><i>workspace-scoped</i></div>
+        <div><b>secrets</b><i>masked — reveal or copy on demand</i></div>
+        <div><b>details</b><i>sync state, artifact, actions</i></div>
+      </div>
+    </div>
+    <div class="mode-cli">
+      <div class="term-scroll">
+<pre><span class="p">$</span> envy init
+  <span class="o">✓ Initialised envy project ba8075d6-bd9c-4a7a-97a3-20e58525d552.</span>
+<span class="p">$</span> envy set DATABASE_URL=postgres://localhost/app
+  <span class="o">✓ Set DATABASE_URL in development.</span>
+<span class="p">$</span> envy set API_KEY=9f8dK2mQpT3vW7yB2nR4cJ6fL8hG0X4zR1t
+<span class="p">$</span> envy encrypt
+  <span class="o">Sealed 1 environment(s) → envy.enc
+    ✓  development</span>
+<span class="p">$</span> envy status                          <span class="c"># sync dashboard, no passphrase needed</span>
+  <span class="o">+-------------+---------+---------------+-----------+----------+
+  | Environment | Secrets | Last Modified | Status    | Rotation |
+  +==============================================================+
+  | development | 2       | 1 seconds ago | ✓ In Sync | ✓ Fresh  |
+  +-------------+---------+---------------+-----------+----------+
+    Sealed environments: development</span>
+
+<span class="c"># a teammate, any machine</span>
+<span class="p">$</span> git pull
+<span class="p">$</span> envy diff                            <span class="c"># preview what the pull will change, before importing</span>
+  <span class="o">envy diff: development (vault ↔ envy.enc)
+
+    ~ DATABASE_URL
+  1 change: 0 added, 0 removed, 1 modified</span>
+<span class="p">$</span> envy decrypt
+  <span class="o">Imported 1 environment(s) from envy.enc
+    ✓  development (2 secret(s) upserted)</span>   <span class="c"># production stays sealed — different passphrase</span>
+<span class="p">$</span> envy run -- ./app                    <span class="c"># secrets injected in RAM, zeroized on exit</span></pre>
+      </div>
     </div>
   </div>
+
+  <p class="ref-link"><a href="https://github.com/anguriatech/envy/tree/master/docs/commands">Full command reference →</a></p>
 
   <div class="install-bar boot d3" id="installbar">
     <span class="hint">Get envy</span>
@@ -509,6 +577,22 @@
         t.select();document.execCommand('copy');t.remove();done();}
     });
   });
+  (function(){
+    var c=document.querySelector('#console');
+    if(!c) return;
+    var seg=c.querySelector('.seg');
+    if(!seg) return;
+    seg.hidden=false;
+    function show(k){
+      c.setAttribute('data-mode',k);
+      seg.querySelectorAll('button').forEach(function(b){
+        b.setAttribute('aria-pressed', b.getAttribute('data-show')===k?'true':'false');
+      });
+    }
+    seg.querySelectorAll('button').forEach(function(b){
+      b.addEventListener('click',function(){ show(b.getAttribute('data-show')); });
+    });
+  })();
 </script>
 </body>
 </html>

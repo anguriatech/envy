@@ -185,13 +185,23 @@ The form language will be rounded-rectangular and quietly terminal: 14px on larg
 
 ### Console (signature)
 - The workstation frame: 14px radius, sink fill, `--line` border, the console slab shadow.
-- **Chrome bar:** drawn, not part of the image. Raised strip with three 11px dots in red, amber, green and a 13px mono title (`envy - ~/projects/demo`); on the right, a green-pip live label reading "vault unlocked" - the single status surface for the vault state. The drawn bar will stay in markup even if the asset changes.
+- **Chrome bar:** drawn, not part of the image. Raised strip with three 11px dots in red, amber, green and a 13px mono title (`envy - ~/projects/demo`); on the right, the mode controls - the green-pip "vault unlocked" live label in TUI mode, a Copy control in CLI mode (the single status surface per mode). The drawn bar will stay in markup even if the asset changes.
 - **Recording:** a block-level image at natural aspect ratio (1200×653) filling the frame width.
 - **Panel legend:** a three-column strip matching the recording's panel proportions (grid `1fr 1.72fr 1fr`), each cell a mono annotation pair: bold label in ink, whisper note in ink 3. Legend columns and panel columns will stay aligned; a future recording crop will preserve the panel widths or the grid will be updated with it.
 
 ### Install bar (signature)
 - Sticky pill at the viewport bottom: raised 92% scrim, 10px blur, `--line` border, 14px radius, 860px max width.
 - Contents in one row: mono hint in ink 3, the command with the subcommand in violet 2, the copy control, and the primary button. The command text and the copy payload will stay in sync (`data-copy`).
+
+### Hero mode toggle (TUI | CLI)
+- The hero console is one frame with two faces. A segmented control (TUI / CLI) lives inside the drawn console bar, right-aligned: raised pill, flat buttons, the active one fills flat `--violet` with white text - a selection state, not a CTA, so no gradient. Buttons carry `aria-pressed`; the control is revealed by JavaScript.
+- **TUI mode (default):** the recording plus the panel legend, exactly as the console has always shown them; the bar's right side carries the green-pip "vault unlocked" live label.
+- **CLI mode:** the golden-path transcript renders inside the same frame - sink interior, prompts in violet 2 with user-select disabled, comments and outputs dimmed - and the bar's right side swaps the live label for a Copy control whose `data-copy` payload stays in sync with the transcript. On narrow screens the transcript scrolls sideways inside the frame; the page never widens.
+- **Mode rules:** exactly one mode is visible at a time (`data-mode` on the console drives the CSS); the toggle defaults to TUI, and without JavaScript only TUI renders - the CLI workflow is still narrated in prose below the fold.
+- A single mono link under the console ("Full command reference") leads to the repository's `docs/commands/`; nothing deeper ships on the page.
+
+### Named Rules
+**The Curated Transcript Rule.** Transcripts are hand-picked golden paths, never pasted reference dumps: every flag shown must exist in `docs/commands/`, and every output line is captured verbatim from the real binary (paths trimmed for width only) - invented output is forbidden. The hero links out to the repository for the complete surface; extending the transcript means re-capturing its output and extending the Copy payload with it.
 
 ### Feature rows
 - Two-column editorial rows: h3 plus mono key subline left, prose right, hairline dividers between rows. Emphasis inside prose will use ink-weighted `<b>`, never color.
@@ -215,7 +225,8 @@ The form language will be rounded-rectangular and quietly terminal: 14px on larg
 - **Do** keep the gradient confined to the brand mark, the wordmark, and the primary button, per the Single Gradient Rule.
 - **Do** build secondary actions as raised fills with a violet hover border.
 - **Do** wrap any new animation inside the existing `@media (prefers-reduced-motion: no-preference)` block alongside the boot reveal and smooth scroll. Nothing outside that gate will animate.
-- **Do** keep table columns at full width inside the scroll container and extend the scroll when columns grow.
+- **Do** keep table columns at full width inside the scroll container and extend the scroll when columns grow; the same applies to the drive transcript.
+- **Do** keep the hero CLI transcript a curated golden path whose flags exist in `docs/commands/`, per the Curated Transcript Rule.
 - **Do** set all terminal, code, and data text in Fira Code, per the Product's Face Rule.
 - **Do** allow inline code inside prose to break anywhere so long URLs never widen the page on small screens; the install-bar command stays whole.
 - **Do** keep copy plain and honest: concrete numbers, admitted limits, no marketing gloss.
@@ -223,6 +234,7 @@ The form language will be rounded-rectangular and quietly terminal: 14px on larg
 ### Don't:
 - **Don't** apply the gradient to borders, backgrounds, or body text, or add a second competing gradient; dilution kills the brand moments.
 - **Don't** use emoji anywhere on the page; the voice is typographic only.
+- **Don't** paste the full command reference into the page; the drive section links to the repository, and the transcript stays a golden path.
 - **Don't** shrink the table below its 760px min-width or hide columns responsively.
 - **Don't** add a second surface reporting the same state; each state will speak through one channel: the live label for vault state, the copy button's green flip, the table verdict classes. No badges, toasts, or duplicate indicators.
 - **Don't** ship un-gated motion, new shadows, or new status colors.
