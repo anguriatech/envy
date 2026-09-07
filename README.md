@@ -10,6 +10,8 @@
 **Local-first secret management for teams who take security seriously.**
 No SaaS. No internet. No plaintext — ever.
 
+*Git is the transport layer. Cryptography is the access control.*
+
 [![CI](https://github.com/anguriatech/envy/actions/workflows/ci.yml/badge.svg)](https://github.com/anguriatech/envy/actions/workflows/ci.yml)
 [![Latest Release](https://img.shields.io/github/v/release/anguriatech/envy)](https://github.com/anguriatech/envy/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -57,7 +59,7 @@ The tools meant to solve this — hosted vaults, secrets managers, SaaS platform
 <tr>
 <td width="50%" valign="top">
 
-### 🔐 Zero-Trust Storage
+### 🔐 Encrypted Storage
 
 Secrets are encrypted with AES-256-GCM before they touch the database. The database itself is encrypted with SQLCipher. The master key lives exclusively in your OS Keychain — never written to any file, never exposed to the filesystem.
 
