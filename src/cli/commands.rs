@@ -59,10 +59,14 @@ fn audit_best_effort(
 /// Creates `envy.toml` and registers a new project entry in the vault.
 /// This is the only handler that owns its own Vault connection.
 ///
+/// When `auto_inject` is true, the manifest opts into transparent shell
+/// auto-injection (`envy hook` + `eval "$(envy shell-init …)"`), so bare
+/// `npm run dev` picks up vault secrets without the `envy run --` prefix.
+///
 /// # Errors
 /// - [`CliError::AlreadyInitialised`] — `envy.toml` exists in the cwd.
 /// - [`CliError::VaultOpen`] — keyring, vault open, or DB write failed.
-pub(super) fn cmd_init() -> Result<(), CliError> {
+pub(super) fn cmd_init(auto_inject: bool) -> Result<(), CliError> {
     let cwd = std::env::current_dir()
         .map_err(|e| CliError::VaultOpen(format!("cannot determine current directory: {e}")))?;
 
@@ -103,10 +107,20 @@ pub(super) fn cmd_init() -> Result<(), CliError> {
         .map_err(|e| CliError::VaultOpen(e.to_string()))?;
 
     // Step 5 — Write envy.toml with the DB-generated project UUID.
-    crate::core::create_manifest(&cwd, project_id.as_str())
+    crate::core::create_manifest_with_options(&cwd, project_id.as_str(), auto_inject)
         .map_err(|e| CliError::VaultOpen(e.to_string()))?;
 
     println!("✓ Initialised envy project {}.", project_id.as_str());
+    if auto_inject {
+        println!("auto-inject enabled. One-time shell setup (pick your shell):");
+        println!("  bash/zsh:  eval \"$(envy shell-init bash)\"   >> ~/.bashrc  (or ~/.zshrc with zsh)");
+        println!("  fish:      envy shell-init fish >> ~/.config/fish/config.fish");
+        println!("  powershell: add `Invoke-Expression (& envy shell-init powershell | Out-String)` to $PROFILE");
+        println!("  nushell:   paste `envy shell-init nushell` into config.nu");
+        println!("env: $ENVY_ENV or development. Disable anytime: envy auto off (or ENVY_AUTO_INJECT=0).");
+    } else {
+        println!("hint: `envy auto on` enables transparent auto-injection (no more `envy run --` prefix).");
+    }
     Ok(())
 }
 

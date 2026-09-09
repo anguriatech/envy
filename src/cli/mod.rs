@@ -13,6 +13,7 @@
 mod commands;
 mod error;
 pub mod format;
+mod shell;
 mod tui;
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -41,6 +42,18 @@ pub struct Cli {
     pub format: OutputFormat,
 }
 
+/// Action for `envy auto` (transparent shell auto-injection opt-in).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[value(rename_all = "lowercase")]
+pub enum AutoAction {
+    /// Enable auto-injection for this project (`auto_inject = true`).
+    On,
+    /// Disable auto-injection for this project (`auto_inject = false`).
+    Off,
+    /// Show whether auto-injection is on or off (default when omitted).
+    Status,
+}
+
 /// The set of subcommands recognised by the `envy` binary.
 ///
 /// Each variant maps to one `envy <subcommand>` invocation.
@@ -50,7 +63,15 @@ pub enum Commands {
     ///
     /// Creates `envy.toml` (the project manifest) and registers a new project
     /// in the vault. Must be run once per project before any other command.
-    Init,
+    /// Pass `--auto-inject` to opt into transparent shell auto-injection
+    /// (no more `envy run` prefix once the one-time shell setup is done).
+    Init {
+        /// Opt into transparent shell auto-injection (`auto_inject = true`
+        /// in envy.toml). Complete with the `eval "$(envy shell-init …)"`
+        /// line the command prints.
+        #[arg(long)]
+        auto_inject: bool,
+    },
 
     /// Store or update a secret.
     ///
@@ -288,6 +309,50 @@ pub enum Commands {
         #[command(subcommand)]
         action: HooksAction,
     },
+
+    /// Manage transparent shell auto-injection for this project.
+    ///
+    /// `envy auto on` sets `auto_inject = true` in `envy.toml`; combined with
+    /// the one-time `eval "$(envy shell-init <shell>)"` setup, entering the
+    /// project directory auto-exports vault secrets (envy wins over a legacy
+    /// `.env`, with a warning) so bare `npm run dev` just works — humans and
+    /// AI agents no longer need the `envy run --` prefix. `ENVY_ENV` selects
+    /// the environment (default: development); `ENVY_AUTO_INJECT=0` disables
+    /// globally. Unlike the scoped `envy run`, auto-inject exports into your
+    /// interactive shell — prefer `envy run` in CI and for production.
+    Auto {
+        /// `on` to enable, `off` to disable, `status` (default) to show state.
+        action: Option<AutoAction>,
+    },
+
+    /// Print the one-time shell setup snippet for auto-injection.
+    ///
+    /// Add `eval "$(envy shell-init <shell>)"` to your shell profile
+    /// (~/.bashrc, ~/.zshrc, fish config.fish, $PROFILE, config.nu), restart
+    /// the shell, then `envy auto on` in each project. For direnv users, put
+    /// `eval "$(envy hook --shell bash)"` in the project's `.envrc` instead.
+    #[command(name = "shell-init")]
+    ShellInit {
+        /// Target shell (default: detected from `$SHELL`, else bash).
+        shell: Option<shell::ShellKind>,
+    },
+
+    /// Print `eval`-able exports for the current directory (prompt hook).
+    ///
+    /// Meant to be called by the shell hook installed via `envy shell-init`,
+    /// not by hand: stdout carries shell code (`eval "$(envy hook)"`),
+    /// stderr carries the `.env`-precedence warning. Always exits 0 — outside
+    /// a project (or with auto-inject off, or an unreachable vault) it prints
+    /// unload-cleanup code or nothing, never an error, so the prompt survives.
+    Hook {
+        /// Output syntax (the snippet always passes this explicitly).
+        #[arg(long, value_enum)]
+        shell: Option<shell::ShellKind>,
+
+        /// Target environment (default: `$ENVY_ENV` or development).
+        #[arg(short = 'e', long = "env", value_name = "ENV")]
+        env: Option<String>,
+    },
 }
 
 /// Subcommands of `envy hooks`.
@@ -382,6 +447,24 @@ pub fn run() -> i32 {
         return 0;
     }
 
+    // --- ShellInit: static snippet, no vault or manifest needed. ---
+    if let Commands::ShellInit { shell } = command {
+        return match shell::cmd_shell_init(*shell) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("{}", format_cli_error(&e));
+                cli_exit_code(&e)
+            }
+        };
+    }
+
+    // --- Hook: prompt hook, must never break the shell. It owns its own
+    // lightweight flow (no manifest/vault errors propagate) and always
+    // exits 0. Handled before ~/.envy creation so a cold machine stays silent.
+    if let Commands::Hook { shell, env } = command {
+        return shell::cmd_hook(*shell, env.as_deref());
+    }
+
     // --- Ensure ~/.envy/ exists for every command (including Init). ---
     if let Some(vault_dir) = vault_path().parent() {
         if let Err(e) = std::fs::create_dir_all(vault_dir) {
@@ -391,8 +474,9 @@ pub fn run() -> i32 {
     }
 
     // --- Init is special: it manages its own vault lifecycle. ---
-    if let Some(Commands::Init) = &cli.command {
-        return match commands::cmd_init() {
+    if let Some(Commands::Init { auto_inject }) = &cli.command {
+        let auto_inject = *auto_inject;
+        return match commands::cmd_init(auto_inject) {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("{}", format_cli_error(&e));
@@ -467,7 +551,7 @@ pub fn run() -> i32 {
     }
 
     match cli.command.expect("command validated before vault setup") {
-        Commands::Init => unreachable!("Init is handled above"),
+        Commands::Init { .. } => unreachable!("Init is handled above"),
 
         Commands::Set {
             assignment,
@@ -695,6 +779,31 @@ pub fn run() -> i32 {
         }
 
         Commands::Hooks { .. } => unreachable!("Hooks is handled above"),
+
+        Commands::Auto { action } => {
+            let project_label = cwd
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("this project");
+            match shell::cmd_auto(
+                &vault,
+                &project_id,
+                &manifest,
+                &manifest_path,
+                action,
+                project_label,
+            ) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("{}", format_cli_error(&e));
+                    cli_exit_code(&e)
+                }
+            }
+        }
+
+        Commands::ShellInit { .. } => unreachable!("ShellInit is handled above"),
+
+        Commands::Hook { .. } => unreachable!("Hook is handled above"),
 
         Commands::Completions { .. } => unreachable!("Completions is handled above"),
     }

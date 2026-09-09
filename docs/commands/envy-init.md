@@ -17,16 +17,20 @@ project — before any other command. No secrets are written to disk.
 ## Syntax & flags
 
 ```text
-envy init
+envy init [--auto-inject]
 ```
 
-No flags.
+| Flag | Description |
+|------|-------------|
+| `--auto-inject` | Opt into transparent shell auto-injection (`auto_inject = true` in `envy.toml`); the command prints the one-time shell setup to complete it |
 
 ## Examples
 
 ```bash
 cd my-project
 envy init
+# or opt into auto-injection from the start (no more `envy run --` prefix):
+envy init --auto-inject
 ```
 
 ## How it works
@@ -50,3 +54,5 @@ the deterministic fallback key (ephemeral vault — dummy values only).
 
 - [envy set](envy-set.md) — store your first secret after initialising
 - [envy run](envy-run.md) — inject secrets into a child process
+- [envy auto](envy-auto.md) — enable transparent auto-injection later (`envy auto on`)
+- [envy shell-init](envy-shell-init.md) — one-time shell setup auto-injection needs
