@@ -31,8 +31,10 @@ envy auto [on|off|status]
 ## Examples
 
 ```bash
-# Opt in and print the one-time shell setup
+# Opt in — also offers to install the shell hook on the spot (like init --auto-inject)
 envy auto on
+#   ✓ auto-inject enabled for my-project.
+#   Detected shell: zsh — append the envy auto-inject hook to /Users/you/.zshrc? [y/N]
 
 # Check state
 envy auto status
@@ -47,7 +49,10 @@ envy auto off
 ## How it works
 
 `auto` only flips the `auto_inject` flag in `envy.toml` (text edit — your
-`rotation_reminder_days` and comments are preserved). The actual injection is done
+`rotation_reminder_days` and comments are preserved), then — for `on` — offers
+the one-time hook installation exactly like `envy init --auto-inject`
+(shell detected from `$SHELL`, `[y/N]` defaulting to `N`, manual one-liner on
+decline / no TTY / powershell / nushell). The actual injection is done
 by the shell hook ([envy shell-init](envy-shell-init.md) + [envy hook](envy-hook.md)):
 environment selection is `$ENVY_ENV` or `development`, and `ENVY_AUTO_INJECT=0`
 disables injection globally.

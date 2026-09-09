@@ -712,14 +712,11 @@ pub(super) fn cmd_auto(
             crate::core::set_manifest_auto_inject(manifest_dir, true)
                 .map_err(|e| CliError::VaultOpen(e.to_string()))?;
             println!("✓ auto-inject enabled for {project_label}.");
-            println!("one-time shell setup (pick your shell):");
-            println!("  bash:      envy shell-init bash >> ~/.bashrc  (then restart)");
-            println!("  zsh:       envy shell-init zsh >> ~/.zshrc  (then restart)");
-            println!("  fish:      envy shell-init fish >> ~/.config/fish/config.fish");
-            println!("  powershell: add `Invoke-Expression (& envy shell-init powershell | Out-String)` to $PROFILE");
-            println!("  nushell:   paste `envy shell-init nushell` into config.nu");
-            println!("  direnv:    put `eval \"$(envy hook --shell bash)\"` in .envrc, then `direnv allow`");
+            // Same one-step offer as `envy init --auto-inject`: best-effort,
+            // never fails the command (declined prompt → manual instructions).
+            offer_hook_install();
             println!("env: $ENVY_ENV or development. Disable anytime: envy auto off (or ENVY_AUTO_INJECT=0).");
+            println!("other shells: `envy shell-init <bash|zsh|fish|powershell|nushell>`; direnv: `eval \"$(envy hook --shell bash)\"` in .envrc.");
             Ok(())
         }
         AutoAction::Off => {
