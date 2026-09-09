@@ -130,7 +130,7 @@ pub fn prev_exported_keys() -> Vec<String> {
     let mut out = Vec::new();
     for part in raw.split(':') {
         let k = part.trim();
-        if !k.is_empty() && !out.iter().any(|e| e.as_str() == k) {
+        if !k.is_empty() && !out.iter().any(|e: &String| e.as_str() == k) {
             out.push(k.to_string());
         }
     }
@@ -775,7 +775,7 @@ pub(super) fn cmd_hook(shell: Option<ShellKind>, env_flag: Option<&str>) -> i32 
         .map(|(k, v)| (k, v.to_string()))
         .collect();
 
-    let plan = compute_hook_plan(&pairs, &prev, &env_name, has_dotenv, &manifest_dir);
+    let plan = compute_hook_plan(pairs, &prev, &env_name, has_dotenv, &manifest_dir);
     if plan.has_dotenv && !plan.secrets.is_empty() {
         eprintln!(
             "envy: warning: .env found in {} — envy vars take precedence (auto-inject, env '{}')",
