@@ -21,6 +21,9 @@ use format::OutputFormat;
 use std::io::Read;
 
 pub use error::{CliError, cli_exit_code, core_exit_code, format_cli_error, format_core_error};
+// Re-exported so the `ShellInit::shell` / `Hook::shell` fields of the public
+// `Commands` enum don't expose a less-visible type (`private_interfaces` lint).
+pub use shell::ShellKind;
 
 // ---------------------------------------------------------------------------
 // Clap argument structures

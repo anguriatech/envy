@@ -35,9 +35,14 @@ use std::path::{Path, PathBuf};
 // ---------------------------------------------------------------------------
 
 /// Shells supported by `envy shell-init` / `envy hook --shell`.
+///
+/// `pub` (not `pub(super)` like the rest of this module): the `Commands`
+/// enum in `super` is public API, so its `ShellInit::shell` / `Hook::shell`
+/// fields cannot expose a less-visible type (`private_interfaces` lint).
+/// Re-exported from `super` for the same reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 #[value(rename_all = "lowercase")]
-pub(super) enum ShellKind {
+pub enum ShellKind {
     Bash,
     Zsh,
     Fish,
@@ -543,9 +548,12 @@ pub(super) fn snippet_marker(shell: ShellKind) -> String {
 /// top of a manual setup. Matching is shell-specific: a bash snippet does
 /// not count as a zsh installation.
 pub(super) fn hook_already_installed(rc_content: &str, shell: ShellKind) -> bool {
-    rc_content.contains(&snippet_marker(shell))
-        || rc_content.contains(&format!("envy hook --shell {}", shell.name()))
-        || rc_content.contains(&format!("envy shell-init {}", shell.name()))
+    let marker = snippet_marker(shell);
+    let hook_ref = format!("envy hook --shell {}", shell.name());
+    let init_ref = format!("envy shell-init {}", shell.name());
+    rc_content.contains(marker.as_str())
+        || rc_content.contains(hook_ref.as_str())
+        || rc_content.contains(init_ref.as_str())
 }
 
 /// Deterministic rc file for shells with a conventional location.
@@ -804,7 +812,7 @@ pub(super) fn cmd_hook(shell: Option<ShellKind>, env_flag: Option<&str>) -> i32 
         Ok(v) => v,
         Err(_) => return 0,
     };
-    let project_id = ProjectId(manifest.project_id.clone());
+    let project_id = ProjectId(manifest.project_id);
     // `get_env_secrets` returns an empty map for a missing environment or a
     // project row that does not exist yet (fresh machine, vault moved) — both
     // correctly degrade to "unload stale keys". Only hard DB/crypto failures
@@ -1051,29 +1059,28 @@ mod tests {
         let rc = tmp.path().join(".zshrc");
         std::fs::write(&rc, "export PATH=$PATH:/x\nno-trailing-newline").expect("seed rc");
 
-        assert_eq!(
-            append_snippet_if_missing(&rc, ShellKind::Zsh),
-            Ok(true),
+        assert!(
+            append_snippet_if_missing(&rc, ShellKind::Zsh).expect("append must not fail"),
             "first install must append"
         );
         let content = std::fs::read_to_string(&rc).expect("read rc");
+        let marker = snippet_marker(ShellKind::Zsh);
         assert!(
             content.starts_with("export PATH=$PATH:/x\nno-trailing-newline\n"),
             "original content must be preserved with newline fix, got:\n{content}"
         );
         assert!(
-            content.contains(&snippet_marker(ShellKind::Zsh)),
+            content.contains(marker.as_str()),
             "snippet marker must be present"
         );
 
-        assert_eq!(
-            append_snippet_if_missing(&rc, ShellKind::Zsh),
-            Ok(false),
+        assert!(
+            !append_snippet_if_missing(&rc, ShellKind::Zsh).expect("reinstall must not fail"),
             "second install must be a no-op"
         );
         let content2 = std::fs::read_to_string(&rc).expect("read rc again");
         assert_eq!(
-            content2.matches(&snippet_marker(ShellKind::Zsh)).count(),
+            content2.matches(marker.as_str()).count(),
             1,
             "marker must appear exactly once"
         );
@@ -1083,13 +1090,12 @@ mod tests {
     fn append_creates_missing_file_and_parents() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let rc = tmp.path().join("sub").join("dir").join("config.fish");
-        assert_eq!(
-            append_snippet_if_missing(&rc, ShellKind::Fish),
-            Ok(true),
+        assert!(
+            append_snippet_if_missing(&rc, ShellKind::Fish).expect("append must not fail"),
             "must create parents and file"
         );
         let content = std::fs::read_to_string(&rc).expect("read rc");
-        assert!(content.contains(&snippet_marker(ShellKind::Fish)));
+        assert!(content.contains(snippet_marker(ShellKind::Fish).as_str()));
     }
 
     #[test]
