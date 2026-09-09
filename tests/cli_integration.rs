@@ -470,3 +470,233 @@ fn cli_migrate_imports_env_file() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// 017 — shell-init prints a static snippet (no keyring needed)
+// ---------------------------------------------------------------------------
+
+/// Verifies that `envy shell-init` works everywhere — outside any project and
+/// without touching the keyring — since it only prints static text.
+#[test]
+fn shell_init_prints_snippet_without_project_or_keyring() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let out = envy(&["shell-init", "bash"], tmp.path());
+    assert!(
+        out.status.success(),
+        "envy shell-init must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("# >>> envy auto-inject (bash) >>>"),
+        "snippet must carry its idempotency marker, got: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("__envy_hook"),
+        "snippet must define the hook function, got: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("ENVY_AUTO_INJECT"),
+        "snippet must document the kill-switch, got: {stdout:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 017 — hook outside any project is a silent no-op (no keyring needed)
+// ---------------------------------------------------------------------------
+
+/// Verifies the prompt-hook safety contract without a vault: outside a project
+/// (and with hook tracking vars cleared for determinism) `envy hook` exits 0
+/// with empty stdout, so a bare prompt never breaks.
+#[test]
+fn hook_outside_project_is_silent_noop() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["hook", "--shell", "bash"])
+        .current_dir(tmp.path())
+        .env_remove("__ENVY_KEYS")
+        .env_remove("__ENVY_ENV")
+        .env_remove("ENVY_ENV")
+        .env_remove("ENVY_AUTO_INJECT")
+        .output()
+        .expect("failed to spawn envy hook");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "envy hook must always exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.stdout.is_empty(),
+        "nothing to unload means empty stdout, got: {:?}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 017 — auto flag round-trip via the binary
+// ---------------------------------------------------------------------------
+
+/// Verifies `envy auto status|on|off` through the binary: the flag round-trips
+/// through `envy.toml`. stdin is nulled so the one-step installer can never
+/// block on its `[y/N]` prompt under a TTY; assertions target the flag, not
+/// the installer output.
+#[test]
+#[ignore = "requires a live OS keyring daemon (Secret Service / Keychain)"]
+fn cli_auto_flag_round_trip() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    setup_project(tmp.path());
+
+    let status_out = envy(&["auto", "status"], tmp.path());
+    assert!(status_out.status.success());
+    assert!(
+        String::from_utf8_lossy(&status_out.stdout).contains("off"),
+        "fresh project must report auto-inject off"
+    );
+
+    let on_out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["auto", "on"])
+        .current_dir(tmp.path())
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to spawn envy auto on");
+    assert!(
+        on_out.status.success(),
+        "envy auto on must exit 0, stderr: {}",
+        String::from_utf8_lossy(&on_out.stderr)
+    );
+    let content = std::fs::read_to_string(tmp.path().join("envy.toml")).expect("read envy.toml");
+    assert!(
+        content.contains("auto_inject = true"),
+        "envy.toml must carry auto_inject = true, got:\n{content}"
+    );
+
+    let off_out = envy(&["auto", "off"], tmp.path());
+    assert!(off_out.status.success());
+    let content = std::fs::read_to_string(tmp.path().join("envy.toml")).expect("read envy.toml");
+    assert!(
+        content.contains("auto_inject = false"),
+        "envy.toml must carry auto_inject = false, got:\n{content}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 017 — init --auto-inject never prompts without a TTY
+// ---------------------------------------------------------------------------
+
+/// Verifies the one-step setup degrades safely headless: with stdin nulled,
+/// `envy init --auto-inject` exits 0, writes the flag, and prints the manual
+/// one-liner instead of blocking on the installer prompt.
+#[test]
+#[ignore = "requires a live OS keyring daemon (Secret Service / Keychain)"]
+fn cli_init_auto_inject_is_non_interactive_safe() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["init", "--auto-inject"])
+        .current_dir(tmp.path())
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to spawn envy init");
+    assert!(
+        out.status.success(),
+        "envy init --auto-inject must exit 0 headless, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let content = std::fs::read_to_string(tmp.path().join("envy.toml")).expect("read envy.toml");
+    assert!(
+        content.contains("auto_inject = true"),
+        "envy.toml must carry auto_inject = true, got:\n{content}"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("auto-inject enabled."),
+        "must confirm the opt-in on stdout"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 017 — hook injects, unloads, and respects the kill-switch
+// ---------------------------------------------------------------------------
+
+/// End-to-end hook behaviour through the binary: inject after `set`, unload
+/// previously exported keys, and honour `ENVY_AUTO_INJECT=0`. Hook-related
+/// tracking vars are scrubbed from the child environment for determinism.
+#[test]
+#[ignore = "requires a live OS keyring daemon (Secret Service / Keychain)"]
+fn cli_hook_injects_unloads_and_respects_kill_switch() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    setup_project(tmp.path());
+
+    let on_out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["auto", "on"])
+        .current_dir(tmp.path())
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to spawn envy auto on");
+    assert!(on_out.status.success());
+
+    envy(&["set", "HOOK_TEST_VAR=hook_hello"], tmp.path());
+
+    // Inject: exports for the vault secret plus tracking state.
+    let hook_out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["hook", "--shell", "bash"])
+        .current_dir(tmp.path())
+        .stdin(Stdio::null())
+        .env_remove("__ENVY_KEYS")
+        .env_remove("__ENVY_ENV")
+        .env_remove("ENVY_ENV")
+        .env_remove("ENVY_AUTO_INJECT")
+        .output()
+        .expect("failed to spawn envy hook");
+    assert_eq!(hook_out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&hook_out.stdout);
+    assert!(
+        stdout.contains("export HOOK_TEST_VAR='hook_hello';"),
+        "hook must export the vault secret, got: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("__ENVY_KEYS"),
+        "hook must maintain tracking state, got: {stdout:?}"
+    );
+
+    // Kill-switch: unload previously exported keys, never export values —
+    // even for keys the parent shell claims envy exported before.
+    let killed_out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["hook", "--shell", "bash"])
+        .current_dir(tmp.path())
+        .stdin(Stdio::null())
+        .env("__ENVY_KEYS", "HOOK_TEST_VAR")
+        .env("ENVY_AUTO_INJECT", "0")
+        .env_remove("__ENVY_ENV")
+        .env_remove("ENVY_ENV")
+        .output()
+        .expect("failed to spawn envy hook");
+    assert_eq!(killed_out.status.code(), Some(0));
+    let killed = String::from_utf8_lossy(&killed_out.stdout);
+    assert!(
+        !killed.contains("export HOOK_TEST_VAR="),
+        "kill-switch must never export values, got: {killed:?}"
+    );
+    assert!(
+        killed.contains("unset HOOK_TEST_VAR;"),
+        "kill-switch must unload stale keys, got: {killed:?}"
+    );
+
+    // Outside any project: silent, exit 0.
+    let bare = tempfile::tempdir().expect("tempdir");
+    let outside_out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["hook", "--shell", "bash"])
+        .current_dir(bare.path())
+        .stdin(Stdio::null())
+        .env_remove("__ENVY_KEYS")
+        .env_remove("__ENVY_ENV")
+        .env_remove("ENVY_ENV")
+        .env_remove("ENVY_AUTO_INJECT")
+        .output()
+        .expect("failed to spawn envy hook");
+    assert_eq!(outside_out.status.code(), Some(0));
+    assert!(
+        outside_out.stdout.is_empty(),
+        "nothing to unload means empty stdout, got: {:?}",
+        String::from_utf8_lossy(&outside_out.stdout)
+    );
+}

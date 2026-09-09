@@ -19,7 +19,10 @@ pub use audit::{AuditAction, AuditEntry, list_audit, record as record_audit};
 pub use diff::{ChangeType, DiffEntry, DiffReport, compute_diff};
 pub use discover::{DiscoveredProject, discover_projects};
 pub use error::CoreError;
-pub use manifest::{Manifest, create_manifest, find_manifest};
+pub use manifest::{
+    Manifest, create_manifest, create_manifest_with_options, find_manifest,
+    set_manifest_auto_inject,
+};
 pub use ops::{
     DEFAULT_ENV, EnvironmentSummary, ProjectSummary, SecretValueSummary, delete_project,
     delete_secret, get_env_secrets, get_secret, list_environments, list_projects, list_secret_keys,

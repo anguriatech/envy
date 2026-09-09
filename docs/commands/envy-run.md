@@ -48,6 +48,12 @@ child is proxied exactly. If the child is killed by a signal, `envy run`
 exits `1`; if the binary cannot be executed, it exits `127` (like the shell).
 `get`/`set`/`rm` actions performed by the child are recorded in the audit log.
 
+> Tired of prefixing every command? [envy auto](envy-auto.md) +
+> [envy shell-init](envy-shell-init.md) transparently export vault secrets when
+> you enter the project, so bare `npm run dev` just works (envy wins over a
+> legacy `.env`, with a warning). `envy run` remains the scoped choice for
+> CI and production deploys.
+
 **Exit codes**:
 
 | Code | Meaning |
@@ -60,5 +66,6 @@ exits `1`; if the binary cannot be executed, it exits `127` (like the shell).
 ## Related commands
 
 - [envy set](envy-set.md) — store the secrets `run` injects
+- [envy auto](envy-auto.md) — transparent auto-injection (no prefix needed)
 - [envy status](envy-status.md) — check vault ↔ `envy.enc` sync first
 - [envy scan](envy-scan.md) — ensure no plaintext copies exist before running

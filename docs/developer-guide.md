@@ -75,14 +75,15 @@ envy/
 ├── src/
 │   ├── main.rs           # Binary entry point — wires up clap and calls cli::run()
 │   ├── cli/
-│   │   ├── mod.rs        # Commands enum, run() dispatch, artifact_path() helper
+│   │   ├── mod.rs        # Commands enum (incl. Auto/Hook/ShellInit), AutoAction, run() dispatch, artifact_path() helper
 │   │   ├── commands.rs   # cmd_* handlers (pub(super)) — one function per subcommand
 │   │   ├── format.rs     # OutputFormat (table/json/dotenv/shell) — print_output, shell escaping
+│   │   ├── shell.rs      # auto-inject: ShellKind, HookPlan compute/render, hook/shell-init/auto handlers, rc installer
 │   │   └── error.rs      # CliError enum, exit-code mappers, formatting helpers
 │   ├── core/
 │   │   ├── mod.rs        # Re-exports — public face of the business logic layer
 │   │   ├── ops.rs        # set_secret, get_secret, list_secret_keys, delete_secret, get_env_secrets
-│   │   ├── manifest.rs   # find_manifest, create_manifest, Manifest struct
+│   │   ├── manifest.rs   # find_manifest, create_manifest(+with_options), set_manifest_auto_inject, Manifest struct (auto_inject)
 │   │   ├── sync.rs       # seal_artifact, unseal_artifact, write_artifact, read_artifact
 │   │   ├── diff.rs       # compute_diff — pure diff logic (ChangeType, DiffEntry, DiffReport)
 │   │   ├── status.rs     # derive_sync_status, get_status_report
