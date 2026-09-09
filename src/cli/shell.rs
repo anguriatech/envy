@@ -225,6 +225,31 @@ pub fn compute_unload_plan(prev_keys: &[String]) -> Vec<String> {
     unset
 }
 
+/// Returns `true` when the injected key set differs from the previously
+/// exported one — i.e. the shell just entered the project, switched
+/// environment, or the vault contents changed.
+///
+/// `plan_keys` comes from [`compute_hook_plan`] (sorted); `prev_keys` is the
+/// raw `$__ENVY_KEYS` content, validated and sorted here so a poisoned
+/// tracking variable can neither suppress nor force warnings.
+///
+/// Entry warnings (legacy `.env` precedence, skipped keys) are gated on this:
+/// both `chpwd` and `precmd` invoke the hook, so an unconditional warning
+/// would print twice per `cd` and spam every Enter afterwards.
+pub fn hook_state_changed(plan_keys: &[String], prev_keys: &[String]) -> bool {
+    let mut prev_valid: Vec<String> = prev_keys
+        .iter()
+        .filter(|k| is_valid_shell_key(k))
+        .cloned()
+        .collect();
+    prev_valid.sort();
+    prev_valid.dedup();
+    let mut current: Vec<String> = plan_keys.to_vec();
+    current.sort();
+    current.dedup();
+    prev_valid != current
+}
+
 // ---------------------------------------------------------------------------
 // Escaping + rendering (stdout payload only — warnings go to stderr)
 // ---------------------------------------------------------------------------
@@ -776,15 +801,18 @@ pub(super) fn cmd_hook(shell: Option<ShellKind>, env_flag: Option<&str>) -> i32 
         .collect();
 
     let plan = compute_hook_plan(pairs, &prev, &env_name, has_dotenv, &manifest_dir);
-    if plan.has_dotenv && !plan.secrets.is_empty() {
-        eprintln!(
-            "envy: warning: .env found in {} — envy vars take precedence (auto-inject, env '{}')",
-            manifest_dir.display(),
-            plan.env_name
-        );
-    }
-    for skipped in &plan.skipped_keys {
-        eprintln!("envy: warning: skipping key '{skipped}': not a valid shell variable name");
+    // Entry warnings fire once per transition (see `hook_state_changed`).
+    if hook_state_changed(&plan.keys, &prev) {
+        if plan.has_dotenv && !plan.secrets.is_empty() {
+            eprintln!(
+                "envy: warning: .env found in {} — envy vars take precedence (auto-inject, env '{}')",
+                manifest_dir.display(),
+                plan.env_name
+            );
+        }
+        for skipped in &plan.skipped_keys {
+            eprintln!("envy: warning: skipping key '{skipped}': not a valid shell variable name");
+        }
     }
     emit(&render_hook_plan(kind, &plan));
     0
@@ -1040,6 +1068,36 @@ mod tests {
         );
         let content = std::fs::read_to_string(&rc).expect("read rc");
         assert!(content.contains(&snippet_marker(ShellKind::Fish)));
+    }
+
+    #[test]
+    fn state_change_detection() {
+        let keys = vec!["A".to_string(), "B".to_string()];
+        // Entering: nothing exported before.
+        assert!(hook_state_changed(&keys, &[]));
+        // Steady state: same set, any order, duplicates tolerated.
+        assert!(!hook_state_changed(
+            &keys,
+            &["B".to_string(), "A".to_string(), "A".to_string()]
+        ));
+        // Vault changed: key added or removed.
+        assert!(hook_state_changed(
+            &["A".to_string()],
+            &["A".to_string(), "B".to_string()]
+        ));
+        assert!(hook_state_changed(
+            &["A".to_string(), "B".to_string(), "C".to_string()],
+            &["A".to_string(), "B".to_string()]
+        ));
+        // Poisoned tracking entries are ignored, not acted on.
+        assert!(!hook_state_changed(
+            &keys,
+            &[
+                "A".to_string(),
+                "B".to_string(),
+                "EVIL;rm -rf".to_string()
+            ]
+        ));
     }
 
     #[test]

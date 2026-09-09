@@ -49,6 +49,10 @@ Resolution order per invocation: `--env` flag > `$ENVY_ENV` > `development`
 environment, and every major dotenv loader (Node `dotenv`, Vite, Next.js, Django,
 Rails) refuses to overwrite already-set variables — so envy wins over a legacy
 `.env` file by construction, and a warning is printed to stderr when both exist.
+Entry warnings (`.env` precedence, skipped keys) print once per transition —
+entering the project, switching environment, or vault changes — not on every
+prompt (both `chpwd` and `precmd` invoke the hook, so steady-state prompts stay
+silent).
 Key names are validated before interpolation (vault keys and the `$__ENVY_KEYS`
 tracking variable alike), values are single-quote escaped per shell, and
 `--shell nushell` emits JSON applied via `load-env` instead of `eval`.
