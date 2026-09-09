@@ -116,9 +116,13 @@ pub(super) fn cmd_init(auto_inject: bool) -> Result<(), CliError> {
         // One-step setup: offer to install the shell hook now. Best-effort —
         // a declined prompt or unwritable rc file only prints manual steps.
         super::shell::offer_hook_install();
-        println!("env: $ENVY_ENV or development. Disable anytime: envy auto off (or ENVY_AUTO_INJECT=0).");
+        println!(
+            "env: $ENVY_ENV or development. Disable anytime: envy auto off (or ENVY_AUTO_INJECT=0)."
+        );
     } else {
-        println!("hint: `envy auto on` enables transparent auto-injection (no more `envy run --` prefix).");
+        println!(
+            "hint: `envy auto on` enables transparent auto-injection (no more `envy run --` prefix)."
+        );
     }
     Ok(())
 }

@@ -284,7 +284,10 @@ pub(super) fn render_hook_plan(shell: ShellKind, plan: &HookPlan) -> String {
             if plan.keys.is_empty() {
                 out.push_str(&format!("unset {TRACKING_VAR};\n"));
             } else {
-                out.push_str(&format!("export {TRACKING_VAR}='{}';\n", join_keys(&plan.keys)));
+                out.push_str(&format!(
+                    "export {TRACKING_VAR}='{}';\n",
+                    join_keys(&plan.keys)
+                ));
             }
             if plan.env_name.is_empty() {
                 out.push_str(&format!("unset {TRACKING_ENV_VAR};\n"));
@@ -304,12 +307,18 @@ pub(super) fn render_hook_plan(shell: ShellKind, plan: &HookPlan) -> String {
             if plan.keys.is_empty() {
                 out.push_str(&format!("set -e {TRACKING_VAR};\n"));
             } else {
-                out.push_str(&format!("set -gx {TRACKING_VAR} '{}';\n", join_keys(&plan.keys)));
+                out.push_str(&format!(
+                    "set -gx {TRACKING_VAR} '{}';\n",
+                    join_keys(&plan.keys)
+                ));
             }
             if plan.env_name.is_empty() {
                 out.push_str(&format!("set -e {TRACKING_ENV_VAR};\n"));
             } else {
-                out.push_str(&format!("set -gx {TRACKING_ENV_VAR} '{}';\n", plan.env_name));
+                out.push_str(&format!(
+                    "set -gx {TRACKING_ENV_VAR} '{}';\n",
+                    plan.env_name
+                ));
             }
             out
         }
@@ -328,7 +337,10 @@ pub(super) fn render_hook_plan(shell: ShellKind, plan: &HookPlan) -> String {
                     "Remove-Item Env:\\{TRACKING_VAR} -ErrorAction SilentlyContinue;\n"
                 ));
             } else {
-                out.push_str(&format!("$env:{TRACKING_VAR}='{}';\n", join_keys(&plan.keys)));
+                out.push_str(&format!(
+                    "$env:{TRACKING_VAR}='{}';\n",
+                    join_keys(&plan.keys)
+                ));
             }
             if plan.env_name.is_empty() {
                 out.push_str(&format!(
@@ -701,10 +713,14 @@ pub(super) fn cmd_auto(
         AutoAction::Status => {
             if manifest.auto_inject {
                 println!("auto-inject: on ({project_label})");
-                println!("shell setup: eval \"$(envy shell-init <bash|zsh|fish|powershell|nushell>)\"");
+                println!(
+                    "shell setup: eval \"$(envy shell-init <bash|zsh|fish|powershell|nushell>)\""
+                );
             } else {
                 println!("auto-inject: off ({project_label})");
-                println!("enable with: envy auto on   (then complete the one-time shell setup it prints)");
+                println!(
+                    "enable with: envy auto on   (then complete the one-time shell setup it prints)"
+                );
             }
             Ok(())
         }
@@ -715,15 +731,21 @@ pub(super) fn cmd_auto(
             // Same one-step offer as `envy init --auto-inject`: best-effort,
             // never fails the command (declined prompt → manual instructions).
             offer_hook_install();
-            println!("env: $ENVY_ENV or development. Disable anytime: envy auto off (or ENVY_AUTO_INJECT=0).");
-            println!("other shells: `envy shell-init <bash|zsh|fish|powershell|nushell>`; direnv: `eval \"$(envy hook --shell bash)\"` in .envrc.");
+            println!(
+                "env: $ENVY_ENV or development. Disable anytime: envy auto off (or ENVY_AUTO_INJECT=0)."
+            );
+            println!(
+                "other shells: `envy shell-init <bash|zsh|fish|powershell|nushell>`; direnv: `eval \"$(envy hook --shell bash)\"` in .envrc."
+            );
             Ok(())
         }
         AutoAction::Off => {
             crate::core::set_manifest_auto_inject(manifest_dir, false)
                 .map_err(|e| CliError::VaultOpen(e.to_string()))?;
             println!("✓ auto-inject disabled for {project_label}.");
-            println!("run `envy hook --shell <shell>` output once more (or cd out and back) to unload already-exported keys.");
+            println!(
+                "run `envy hook --shell <shell>` output once more (or cd out and back) to unload already-exported keys."
+            );
             Ok(())
         }
     }
@@ -977,7 +999,11 @@ mod tests {
         ] {
             let s = shell_init_snippet(shell);
             assert!(s.contains("envy hook"), "snippet for {}", shell.name());
-            assert!(s.contains("ENVY_AUTO_INJECT"), "snippet for {}", shell.name());
+            assert!(
+                s.contains("ENVY_AUTO_INJECT"),
+                "snippet for {}",
+                shell.name()
+            );
         }
     }
 
@@ -1023,8 +1049,7 @@ mod tests {
     fn append_is_idempotent_and_preserves_content() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let rc = tmp.path().join(".zshrc");
-        std::fs::write(&rc, "export PATH=$PATH:/x\nno-trailing-newline")
-            .expect("seed rc");
+        std::fs::write(&rc, "export PATH=$PATH:/x\nno-trailing-newline").expect("seed rc");
 
         assert_eq!(
             append_snippet_if_missing(&rc, ShellKind::Zsh),
@@ -1089,11 +1114,7 @@ mod tests {
         // Poisoned tracking entries are ignored, not acted on.
         assert!(!hook_state_changed(
             &keys,
-            &[
-                "A".to_string(),
-                "B".to_string(),
-                "EVIL;rm -rf".to_string()
-            ]
+            &["A".to_string(), "B".to_string(), "EVIL;rm -rf".to_string()]
         ));
     }
 
