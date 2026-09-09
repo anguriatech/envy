@@ -28,8 +28,8 @@ envy shell-init [bash|zsh|fish|powershell|nushell]
 ## Examples
 
 ```bash
-# bash — append to ~/.bashrc, then restart the shell
-eval "$(envy shell-init bash)" >> /dev/null  # preview first!
+# bash — preview, then append to ~/.bashrc and restart the shell
+envy shell-init bash
 envy shell-init bash >> ~/.bashrc
 
 # zsh — append to ~/.zshrc

@@ -135,7 +135,7 @@ npm install -g @anguriatech/envy
 ```bash
 cd my-project
 envy init       # creates envy.toml (safe to commit)
-# or: envy init --auto-inject  # transparent auto-injection (no `envy run --` prefix)
+# or: envy init --auto-inject  # one-step: opts in + offers to install the shell hook
 ```
 
 **Step 2 — Store secrets and run your app**

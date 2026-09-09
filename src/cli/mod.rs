@@ -63,12 +63,11 @@ pub enum Commands {
     ///
     /// Creates `envy.toml` (the project manifest) and registers a new project
     /// in the vault. Must be run once per project before any other command.
-    /// Pass `--auto-inject` to opt into transparent shell auto-injection
-    /// (no more `envy run` prefix once the one-time shell setup is done).
+    /// Pass `--auto-inject` for one-step transparent shell auto-injection:
+    /// it opts the project in and offers to install the shell hook on the spot.
     Init {
         /// Opt into transparent shell auto-injection (`auto_inject = true`
-        /// in envy.toml). Complete with the `eval "$(envy shell-init …)"`
-        /// line the command prints.
+        /// in envy.toml) and be offered the one-time shell-hook installation.
         #[arg(long)]
         auto_inject: bool,
     },

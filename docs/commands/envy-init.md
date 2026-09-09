@@ -22,7 +22,7 @@ envy init [--auto-inject]
 
 | Flag | Description |
 |------|-------------|
-| `--auto-inject` | Opt into transparent shell auto-injection (`auto_inject = true` in `envy.toml`); the command prints the one-time shell setup to complete it |
+| `--auto-inject` | Opt into transparent shell auto-injection (`auto_inject = true` in `envy.toml`) and be offered the one-time shell-hook installation on the spot |
 
 ## Examples
 
@@ -31,6 +31,8 @@ cd my-project
 envy init
 # or opt into auto-injection from the start (no more `envy run --` prefix):
 envy init --auto-inject
+#   auto-inject enabled.
+#   Detected shell: zsh — append the envy auto-inject hook to /Users/you/.zshrc? [y/N]
 ```
 
 ## How it works
@@ -41,6 +43,14 @@ on first use and encrypted with a master key stored in your OS credential
 manager (Keychain / Credential Manager / Secret Service). In headless
 environments without a keyring daemon, exporting `ENVY_PASSPHRASE` activates
 the deterministic fallback key (ephemeral vault — dummy values only).
+
+With `--auto-inject`, init becomes a one-step setup: after writing the manifest
+it detects your shell (from `$SHELL`) and asks whether to append the hook to
+your rc file (`~/.bashrc`, `~/.zshrc`, or `~/.config/fish/config.fish` —
+default answer `N`, so nothing is modified unless you confirm). Answering `y`
+installs it idempotently (re-running never duplicates); answering `n`, running
+without a TTY, or using powershell/nushell (no deterministic rc path) prints
+the manual one-liner instead. Restart your shell afterwards to activate.
 
 **Exit codes**:
 

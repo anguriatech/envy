@@ -488,6 +488,164 @@ def --env envy-hook [] {{
 }
 
 // ---------------------------------------------------------------------------
+// One-step hook installation (`envy init --auto-inject`)
+// ---------------------------------------------------------------------------
+
+/// Opening marker line of every snippet from [`shell_init_snippet`].
+///
+/// Used to detect an existing installation before appending (idempotency).
+pub fn snippet_marker(shell: ShellKind) -> String {
+    format!("# >>> envy auto-inject ({}) >>>", shell.name())
+}
+
+/// Returns `true` when `rc_content` already installs the hook for `shell`.
+///
+/// Matches the full snippet (via [`snippet_marker`]) as well as a hand-added
+/// line from the docs (`envy hook --shell <shell>` / `envy shell-init
+/// <shell>`), so re-running the installer never stacks a duplicate hook on
+/// top of a manual setup. Matching is shell-specific: a bash snippet does
+/// not count as a zsh installation.
+pub fn hook_already_installed(rc_content: &str, shell: ShellKind) -> bool {
+    rc_content.contains(&snippet_marker(shell))
+        || rc_content.contains(&format!("envy hook --shell {}", shell.name()))
+        || rc_content.contains(&format!("envy shell-init {}", shell.name()))
+}
+
+/// Deterministic rc file for shells with a conventional location.
+///
+/// `bash` → `~/.bashrc`, `zsh` → `~/.zshrc`, `fish` →
+/// `~/.config/fish/config.fish`. Returns `None` for `powershell`/`nushell`
+/// (profile paths vary per platform) and when the home directory cannot be
+/// resolved — those cases fall back to printed manual instructions.
+pub fn rc_file_for_shell(shell: ShellKind) -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    let rel: &str = match shell {
+        ShellKind::Bash => ".bashrc",
+        ShellKind::Zsh => ".zshrc",
+        ShellKind::Fish => ".config/fish/config.fish",
+        ShellKind::Powershell | ShellKind::Nushell => return None,
+    };
+    Some(home.join(rel))
+}
+
+/// One-line manual setup for `shell` (used when auto-install is declined,
+/// impossible, or the shell has no deterministic rc file).
+pub fn oneliner_for_shell(shell: ShellKind) -> String {
+    match shell {
+        ShellKind::Bash => "envy shell-init bash >> ~/.bashrc".to_string(),
+        ShellKind::Zsh => "envy shell-init zsh >> ~/.zshrc".to_string(),
+        ShellKind::Fish => "envy shell-init fish >> ~/.config/fish/config.fish".to_string(),
+        ShellKind::Powershell => {
+            "add `Invoke-Expression (& envy shell-init powershell | Out-String)` to $PROFILE"
+                .to_string()
+        }
+        ShellKind::Nushell => {
+            "paste `envy shell-init nushell` into config.nu ($nu.config-path)".to_string()
+        }
+    }
+}
+
+/// Appends the full [`shell_init_snippet`] to `rc_path` unless already present.
+///
+/// Creates missing parent directories (e.g. `~/.config/fish`). Returns
+/// `Ok(true)` when the snippet was appended, `Ok(false)` when the hook was
+/// already installed — never duplicates. Existing file content is preserved
+/// byte-for-byte (only a missing trailing newline is added first).
+pub fn append_snippet_if_missing(rc_path: &Path, shell: ShellKind) -> Result<bool, String> {
+    let existing = match std::fs::read_to_string(rc_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e.to_string()),
+    };
+    if hook_already_installed(&existing, shell) {
+        return Ok(false);
+    }
+    if let Some(parent) = rc_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(rc_path)
+        .map_err(|e| e.to_string())?;
+    {
+        use std::io::Write as _;
+        if !existing.is_empty() && !existing.ends_with('\n') {
+            file.write_all(b"\n").map_err(|e| e.to_string())?;
+        }
+        file.write_all(shell_init_snippet(shell).as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(true)
+}
+
+/// Offers to install the shell hook during `envy init --auto-inject`.
+///
+/// Best-effort and infallible by design: the project is already initialised
+/// when this runs, so every failure (unwritable rc file, declined prompt,
+/// no TTY, exotic shell) degrades to printed manual instructions — init
+/// itself is never failed retroactively.
+pub(super) fn offer_hook_install() {
+    let shell = detect_shell();
+    let Some(rc_path) = rc_file_for_shell(shell) else {
+        println!(
+            "one-time shell setup ({} needs one manual step):",
+            shell.name()
+        );
+        println!("  {}", oneliner_for_shell(shell));
+        return;
+    };
+    let already = std::fs::read_to_string(&rc_path)
+        .map(|c| hook_already_installed(&c, shell))
+        .unwrap_or(false);
+    if already {
+        println!(
+            "shell hook already present in {} — nothing to do.",
+            rc_path.display()
+        );
+        return;
+    }
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        println!("to finish setup, run:");
+        println!("  {}", oneliner_for_shell(shell));
+        println!("(then restart your shell)");
+        return;
+    }
+    let prompt = format!(
+        "Detected shell: {} — append the envy auto-inject hook to {}?",
+        shell.name(),
+        rc_path.display()
+    );
+    let confirmed = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        .with_prompt(prompt)
+        .default(false)
+        .interact()
+        .unwrap_or(false);
+    if !confirmed {
+        println!("skipped shell setup. To enable later, run:");
+        println!("  {}", oneliner_for_shell(shell));
+        return;
+    }
+    match append_snippet_if_missing(&rc_path, shell) {
+        Ok(true) => println!(
+            "✓ shell hook installed in {} (restart your shell to activate).",
+            rc_path.display()
+        ),
+        Ok(false) => println!(
+            "shell hook already present in {} — nothing to do.",
+            rc_path.display()
+        ),
+        Err(e) => {
+            eprintln!("warning: could not update {}: {e}", rc_path.display());
+            println!("to finish setup manually, run:");
+            println!("  {}", oneliner_for_shell(shell));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Command handlers (pub(super) — called from cli::run)
 // ---------------------------------------------------------------------------
 
@@ -530,7 +688,8 @@ pub(super) fn cmd_auto(
                 .map_err(|e| CliError::VaultOpen(e.to_string()))?;
             println!("✓ auto-inject enabled for {project_label}.");
             println!("one-time shell setup (pick your shell):");
-            println!("  bash/zsh:  eval \"$(envy shell-init bash)\"   >> ~/.bashrc  (or ~/.zshrc with zsh)");
+            println!("  bash:      envy shell-init bash >> ~/.bashrc  (then restart)");
+            println!("  zsh:       envy shell-init zsh >> ~/.zshrc  (then restart)");
             println!("  fish:      envy shell-init fish >> ~/.config/fish/config.fish");
             println!("  powershell: add `Invoke-Expression (& envy shell-init powershell | Out-String)` to $PROFILE");
             println!("  nushell:   paste `envy shell-init nushell` into config.nu");
@@ -811,5 +970,105 @@ mod tests {
         std::fs::write(tmp.path().join("envy.toml"), "project_id = \"x\"\n").expect("write");
         let (m3, _) = crate::core::find_manifest(tmp.path()).expect("find legacy");
         assert!(!m3.auto_inject);
+    }
+
+    #[test]
+    fn install_detection_covers_snippet_and_hand_added_hook() {
+        assert!(!hook_already_installed("", ShellKind::Zsh));
+        assert!(!hook_already_installed(
+            "export PATH=$PATH:/usr/local/bin\n",
+            ShellKind::Zsh
+        ));
+        // Full snippet (as installed by append_snippet_if_missing).
+        let snippet = shell_init_snippet(ShellKind::Zsh);
+        assert!(hook_already_installed(&snippet, ShellKind::Zsh));
+        // Hand-added eval line from the docs (no marker) must also count.
+        assert!(hook_already_installed(
+            "eval \"$(envy shell-init zsh)\"\n",
+            ShellKind::Zsh
+        ));
+        // A snippet for another shell does not count.
+        assert!(!hook_already_installed(
+            &shell_init_snippet(ShellKind::Bash),
+            ShellKind::Zsh
+        ));
+    }
+
+    #[test]
+    fn append_is_idempotent_and_preserves_content() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let rc = tmp.path().join(".zshrc");
+        std::fs::write(&rc, "export PATH=$PATH:/x\nno-trailing-newline")
+            .expect("seed rc");
+
+        assert_eq!(
+            append_snippet_if_missing(&rc, ShellKind::Zsh),
+            Ok(true),
+            "first install must append"
+        );
+        let content = std::fs::read_to_string(&rc).expect("read rc");
+        assert!(
+            content.starts_with("export PATH=$PATH:/x\nno-trailing-newline\n"),
+            "original content must be preserved with newline fix, got:\n{content}"
+        );
+        assert!(
+            content.contains(&snippet_marker(ShellKind::Zsh)),
+            "snippet marker must be present"
+        );
+
+        assert_eq!(
+            append_snippet_if_missing(&rc, ShellKind::Zsh),
+            Ok(false),
+            "second install must be a no-op"
+        );
+        let content2 = std::fs::read_to_string(&rc).expect("read rc again");
+        assert_eq!(
+            content2.matches(&snippet_marker(ShellKind::Zsh)).count(),
+            1,
+            "marker must appear exactly once"
+        );
+    }
+
+    #[test]
+    fn append_creates_missing_file_and_parents() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let rc = tmp.path().join("sub").join("dir").join("config.fish");
+        assert_eq!(
+            append_snippet_if_missing(&rc, ShellKind::Fish),
+            Ok(true),
+            "must create parents and file"
+        );
+        let content = std::fs::read_to_string(&rc).expect("read rc");
+        assert!(content.contains(&snippet_marker(ShellKind::Fish)));
+    }
+
+    #[test]
+    fn rc_paths_and_oneliners() {
+        // No env mutation: only assert suffixes against the real $HOME.
+        let bash = rc_file_for_shell(ShellKind::Bash).expect("bash has an rc");
+        assert!(bash.ends_with(".bashrc"), "got: {}", bash.display());
+        let zsh = rc_file_for_shell(ShellKind::Zsh).expect("zsh has an rc");
+        assert!(zsh.ends_with(".zshrc"), "got: {}", zsh.display());
+        let fish = rc_file_for_shell(ShellKind::Fish).expect("fish has an rc");
+        assert!(
+            fish.ends_with(".config/fish/config.fish"),
+            "got: {}",
+            fish.display()
+        );
+        assert!(rc_file_for_shell(ShellKind::Powershell).is_none());
+        assert!(rc_file_for_shell(ShellKind::Nushell).is_none());
+        for shell in [
+            ShellKind::Bash,
+            ShellKind::Zsh,
+            ShellKind::Fish,
+            ShellKind::Powershell,
+            ShellKind::Nushell,
+        ] {
+            assert!(
+                oneliner_for_shell(shell).contains("shell-init"),
+                "oneliner for {}",
+                shell.name()
+            );
+        }
     }
 }
