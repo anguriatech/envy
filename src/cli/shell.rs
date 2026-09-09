@@ -37,7 +37,7 @@ use std::path::{Path, PathBuf};
 /// Shells supported by `envy shell-init` / `envy hook --shell`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 #[value(rename_all = "lowercase")]
-pub enum ShellKind {
+pub(super) enum ShellKind {
     Bash,
     Zsh,
     Fish,
@@ -62,7 +62,7 @@ impl ShellKind {
 /// Falls back to [`ShellKind::Bash`]. Note this reflects the login shell, not
 /// necessarily the running one — which is why every `shell-init` snippet
 /// passes an explicit `--shell` to `envy hook`.
-pub fn detect_shell() -> ShellKind {
+pub(super) fn detect_shell() -> ShellKind {
     let shell = std::env::var("SHELL").unwrap_or_default();
     let base = shell.rsplit('/').next().unwrap_or("").to_ascii_lowercase();
     if base.contains("zsh") {
@@ -87,7 +87,7 @@ pub fn detect_shell() -> ShellKind {
 /// The shell snippet `eval`s hook output, so this variable round-trips
 /// parent → child on every invocation and lets the hook compute which stale
 /// keys to `unset` (project switch, secret deletion, leaving the tree).
-pub const TRACKING_VAR: &str = "__ENVY_KEYS";
+pub(super) const TRACKING_VAR: &str = "__ENVY_KEYS";
 const TRACKING_ENV_VAR: &str = "__ENVY_ENV";
 
 /// Global kill-switch / force-enable for auto-injection.
@@ -111,7 +111,7 @@ fn global_switch() -> Option<bool> {
 
 /// Resolves the target environment for a hook: `--env` flag > `ENVY_ENV` >
 /// `development`, normalised exactly like core (empty → default, lowercase).
-pub fn resolve_hook_env(flag: Option<&str>) -> String {
+pub(super) fn resolve_hook_env(flag: Option<&str>) -> String {
     let raw = match flag {
         Some(f) if !f.trim().is_empty() => f.trim().to_string(),
         _ => std::env::var("ENVY_ENV").unwrap_or_default(),
@@ -125,7 +125,7 @@ pub fn resolve_hook_env(flag: Option<&str>) -> String {
 }
 
 /// Previously exported keys, from the parent shell via `$__ENVY_KEYS`.
-pub fn prev_exported_keys() -> Vec<String> {
+pub(super) fn prev_exported_keys() -> Vec<String> {
     let raw = std::env::var(TRACKING_VAR).unwrap_or_default();
     let mut out = Vec::new();
     for part in raw.split(':') {
@@ -138,7 +138,7 @@ pub fn prev_exported_keys() -> Vec<String> {
 }
 
 /// Returns `true` iff `key` is safe to interpolate as a shell variable name.
-pub fn is_valid_shell_key(key: &str) -> bool {
+pub(super) fn is_valid_shell_key(key: &str) -> bool {
     let mut chars = key.chars();
     match chars.next() {
         Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
@@ -152,7 +152,7 @@ pub fn is_valid_shell_key(key: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 /// What `envy hook` must emit for one invocation (no I/O).
-pub struct HookPlan {
+pub(super) struct HookPlan {
     /// Normalised environment name that was injected (empty when unloading).
     pub env_name: String,
     /// Valid `(key, value)` pairs to export, sorted by key.
@@ -175,7 +175,7 @@ pub struct HookPlan {
 /// - `prev_keys`: raw `$__ENVY_KEYS` contents (validated here — the parent
 ///   shell environment is attacker-influenced and must never reach `eval`
 ///   unfiltered).
-pub fn compute_hook_plan(
+pub(super) fn compute_hook_plan(
     mut vault_secrets: Vec<(String, String)>,
     prev_keys: &[String],
     env_name: &str,
@@ -214,7 +214,7 @@ pub fn compute_hook_plan(
 }
 
 /// Unload-only plan: no project in scope — drop every previously exported key.
-pub fn compute_unload_plan(prev_keys: &[String]) -> Vec<String> {
+pub(super) fn compute_unload_plan(prev_keys: &[String]) -> Vec<String> {
     let mut unset: Vec<String> = prev_keys
         .iter()
         .filter(|k| is_valid_shell_key(k))
@@ -236,7 +236,7 @@ pub fn compute_unload_plan(prev_keys: &[String]) -> Vec<String> {
 /// Entry warnings (legacy `.env` precedence, skipped keys) are gated on this:
 /// both `chpwd` and `precmd` invoke the hook, so an unconditional warning
 /// would print twice per `cd` and spam every Enter afterwards.
-pub fn hook_state_changed(plan_keys: &[String], prev_keys: &[String]) -> bool {
+pub(super) fn hook_state_changed(plan_keys: &[String], prev_keys: &[String]) -> bool {
     let mut prev_valid: Vec<String> = prev_keys
         .iter()
         .filter(|k| is_valid_shell_key(k))
@@ -271,7 +271,7 @@ fn join_keys(keys: &[String]) -> String {
 }
 
 /// Renders a [`HookPlan`] as shell code (or JSON for nushell).
-pub fn render_hook_plan(shell: ShellKind, plan: &HookPlan) -> String {
+pub(super) fn render_hook_plan(shell: ShellKind, plan: &HookPlan) -> String {
     match shell {
         ShellKind::Bash | ShellKind::Zsh => {
             let mut out = String::new();
@@ -362,7 +362,7 @@ pub fn render_hook_plan(shell: ShellKind, plan: &HookPlan) -> String {
 /// Empty stdout when there is genuinely nothing to unload, so the common
 /// case (prompt outside any envy project) costs the shell a single empty
 /// `eval`. Tracking vars are cleared alongside the keys whenever set.
-pub fn render_unload(shell: ShellKind, prev_keys: &[String]) -> String {
+pub(super) fn render_unload(shell: ShellKind, prev_keys: &[String]) -> String {
     let unset = compute_unload_plan(prev_keys);
     let tracking_set = std::env::var(TRACKING_VAR)
         .map(|v| !v.trim().is_empty())
@@ -392,7 +392,7 @@ pub fn render_unload(shell: ShellKind, prev_keys: &[String]) -> String {
 const SECURITY_NOTE: &str = "Security note: unlike `envy run` (scoped to one child process), auto-inject exports secrets into your interactive shell, visible to every child process. Prefer `envy run` in CI and for production deploys.";
 
 /// Returns the `eval`-able snippet for `shell` (printed by `envy shell-init`).
-pub fn shell_init_snippet(shell: ShellKind) -> String {
+pub(super) fn shell_init_snippet(shell: ShellKind) -> String {
     match shell {
         ShellKind::Bash => format!(
             r#"# >>> envy auto-inject (bash) >>>
@@ -519,7 +519,7 @@ def --env envy-hook [] {{
 /// Opening marker line of every snippet from [`shell_init_snippet`].
 ///
 /// Used to detect an existing installation before appending (idempotency).
-pub fn snippet_marker(shell: ShellKind) -> String {
+pub(super) fn snippet_marker(shell: ShellKind) -> String {
     format!("# >>> envy auto-inject ({}) >>>", shell.name())
 }
 
@@ -530,7 +530,7 @@ pub fn snippet_marker(shell: ShellKind) -> String {
 /// <shell>`), so re-running the installer never stacks a duplicate hook on
 /// top of a manual setup. Matching is shell-specific: a bash snippet does
 /// not count as a zsh installation.
-pub fn hook_already_installed(rc_content: &str, shell: ShellKind) -> bool {
+pub(super) fn hook_already_installed(rc_content: &str, shell: ShellKind) -> bool {
     rc_content.contains(&snippet_marker(shell))
         || rc_content.contains(&format!("envy hook --shell {}", shell.name()))
         || rc_content.contains(&format!("envy shell-init {}", shell.name()))
@@ -542,7 +542,7 @@ pub fn hook_already_installed(rc_content: &str, shell: ShellKind) -> bool {
 /// `~/.config/fish/config.fish`. Returns `None` for `powershell`/`nushell`
 /// (profile paths vary per platform) and when the home directory cannot be
 /// resolved — those cases fall back to printed manual instructions.
-pub fn rc_file_for_shell(shell: ShellKind) -> Option<PathBuf> {
+pub(super) fn rc_file_for_shell(shell: ShellKind) -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let rel: &str = match shell {
         ShellKind::Bash => ".bashrc",
@@ -555,7 +555,7 @@ pub fn rc_file_for_shell(shell: ShellKind) -> Option<PathBuf> {
 
 /// One-line manual setup for `shell` (used when auto-install is declined,
 /// impossible, or the shell has no deterministic rc file).
-pub fn oneliner_for_shell(shell: ShellKind) -> String {
+pub(super) fn oneliner_for_shell(shell: ShellKind) -> String {
     match shell {
         ShellKind::Bash => "envy shell-init bash >> ~/.bashrc".to_string(),
         ShellKind::Zsh => "envy shell-init zsh >> ~/.zshrc".to_string(),
@@ -576,7 +576,7 @@ pub fn oneliner_for_shell(shell: ShellKind) -> String {
 /// `Ok(true)` when the snippet was appended, `Ok(false)` when the hook was
 /// already installed — never duplicates. Existing file content is preserved
 /// byte-for-byte (only a missing trailing newline is added first).
-pub fn append_snippet_if_missing(rc_path: &Path, shell: ShellKind) -> Result<bool, String> {
+pub(super) fn append_snippet_if_missing(rc_path: &Path, shell: ShellKind) -> Result<bool, String> {
     let existing = match std::fs::read_to_string(rc_path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
