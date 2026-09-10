@@ -78,7 +78,8 @@ envy/
 │   │   ├── mod.rs        # Commands enum (incl. Auto/Hook/ShellInit), AutoAction, run() dispatch, artifact_path() helper
 │   │   ├── commands.rs   # cmd_* handlers (pub(super)) — one function per subcommand
 │   │   ├── format.rs     # OutputFormat (table/json/dotenv/shell) — print_output, shell escaping
-│   │   ├── shell.rs      # auto-inject: ShellKind, HookPlan compute/render, hook/shell-init/auto handlers, rc installer
+│   │   ├── shell.rs      # ShellKind, PATH-line snippets, auto opt-in hints
+│   │   ├── shim.rs       # detectors, shim read/write/prune/list, PATH resolution, reshim/shim/exec/doctor handlers
 │   │   └── error.rs      # CliError enum, exit-code mappers, formatting helpers
 │   ├── core/
 │   │   ├── mod.rs        # Re-exports — public face of the business logic layer

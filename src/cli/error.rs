@@ -77,6 +77,10 @@ pub enum CliError {
         "{0} already exists and was not installed by envy \u{2014} re-run with --force to back it up and replace it"
     )]
     HookConflict(String),
+
+    /// `envy shim add` name is not a safe file name (would allow path tricks).
+    #[error("invalid shim name \"{0}\": use letters, digits, dot, dash and underscore")]
+    InvalidShimName(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -131,12 +135,13 @@ pub fn core_exit_code(e: &CoreError) -> i32 {
 /// | Code | Meaning |
 /// |------|---------|
 /// | 1    | File not found |
-/// | 2    | Invalid input (bad assignment format) |
+/// | 2    | Invalid input (bad assignment format, bad shim name) |
 /// | 3    | Initialisation conflict |
 /// | 4    | Vault failure |
 pub fn cli_exit_code(e: &CliError) -> i32 {
     match e {
         CliError::InvalidAssignment(_) => 2,
+        CliError::InvalidShimName(_) => 2,
         CliError::FileNotFound(_, _) => 1,
         CliError::AlreadyInitialised => 3,
         CliError::ProjectNotInVault => 4,
@@ -206,6 +211,15 @@ mod tests {
             cli_exit_code(&CliError::PassphraseInput("some error".into())),
             2,
             "PassphraseInput must map to exit code 2"
+        );
+    }
+
+    #[test]
+    fn invalid_shim_name_maps_to_exit_code_2() {
+        assert_eq!(
+            cli_exit_code(&CliError::InvalidShimName("a/b".into())),
+            2,
+            "InvalidShimName must map to exit code 2"
         );
     }
 

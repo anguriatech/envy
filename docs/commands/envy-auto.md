@@ -1,14 +1,14 @@
 # envy auto
 
-Manage transparent shell auto-injection for this project (no more `envy run --` prefix).
+Opt this project into transparent shim injection (no more `envy run --` prefix).
 
 ## What it does
 
-`envy auto on` opts the current project into auto-injection (`auto_inject = true`
-in `envy.toml`). Combined with the one-time `eval "$(envy shell-init <shell>)"`
-setup, entering the project directory auto-exports vault secrets into your shell —
-bare `npm run dev` just works, for humans and AI agents alike, with envy values
-taking precedence over a legacy `.env` file (a warning is printed).
+`envy auto on` opts the current project in (`auto_inject = true` in
+`envy.toml`). Combined with `envy reshim` and shims on `PATH`, bare
+`npm run dev` just works — secrets stay scoped to the child process and the
+parent shell stays clean. `envy auto off` returns shims to transparent
+pass-through.
 
 ## Aliases
 
@@ -24,23 +24,25 @@ envy auto [on|off|status]
 
 | Argument | Description |
 |----------|-------------|
-| `on` | Enable auto-injection for this project |
-| `off` | Disable auto-injection for this project |
-| `status` | Show whether auto-injection is on or off (default when omitted) |
+| `on` | Enable shim injection for this project (then `envy reshim`) |
+| `off` | Disable shim injection for this project |
+| `status` | Show whether shim injection is on or off (default when omitted) |
 
 ## Examples
 
 ```bash
-# Opt in — also offers to install the shell hook on the spot (like init --auto-inject)
+# Opt in, then generate shims
 envy auto on
 #   ✓ auto-inject enabled for my-project.
-#   Detected shell: zsh — append the envy auto-inject hook to /Users/you/.zshrc? [y/N]
+#   next steps:
+#     1. envy reshim
+#     2. envy shell-init zsh >> ~/.zshrc
 
 # Check state
 envy auto status
 #   auto-inject: on (my-project)
 
-# Opt out again (cd out and back to unload already-exported keys)
+# Opt out again (shims pass through without secrets)
 envy auto off
 ```
 
@@ -49,17 +51,11 @@ envy auto off
 ## How it works
 
 `auto` only flips the `auto_inject` flag in `envy.toml` (text edit — your
-`rotation_reminder_days` and comments are preserved), then — for `on` — offers
-the one-time hook installation exactly like `envy init --auto-inject`
-(shell detected from `$SHELL`, `[y/N]` defaulting to `N`, manual one-liner on
-decline / no TTY / powershell / nushell). The actual injection is done
-by the shell hook ([envy shell-init](envy-shell-init.md) + [envy hook](envy-hook.md)):
-environment selection is `$ENVY_ENV` or `development`, and `ENVY_AUTO_INJECT=0`
-disables injection globally.
-
-Security tradeoff: unlike the scoped `envy run` (secrets live only in one child
-process), auto-inject exports secrets into your interactive shell, visible to every
-child process. Prefer `envy run` in CI and for production deploys.
+`rotation_reminder_days` and comments are preserved), then prints the two
+setup steps. The actual injection is done by shims ([envy reshim](envy-reshim.md)
+generates them, [envy exec](envy-exec.md) runs them): environment selection is
+`$ENVY_ENV` or `development`, and `ENVY_AUTO_INJECT=0` disables injection
+globally.
 
 **Exit codes**:
 
@@ -71,7 +67,8 @@ child process. Prefer `envy run` in CI and for production deploys.
 
 ## Related commands
 
-- [envy shell-init](envy-shell-init.md) — one-time shell setup the hook needs
-- [envy hook](envy-hook.md) — what the shell hook calls on every `cd`
-- [envy run](envy-run.md) — scoped one-shot injection (better for CI/production)
+- [envy reshim](envy-reshim.md) — generate shims after opting in
+- [envy shell-init](envy-shell-init.md) — the one-time `PATH` line shims need
+- [envy doctor](envy-doctor.md) — verify the whole setup
+- [envy run](envy-run.md) — scoped one-shot injection (equivalent guarantees)
 - [envy init](envy-init.md) — `envy init --auto-inject` opts in from the start

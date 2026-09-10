@@ -22,17 +22,19 @@ envy init [--auto-inject]
 
 | Flag | Description |
 |------|-------------|
-| `--auto-inject` | Opt into transparent shell auto-injection (`auto_inject = true` in `envy.toml`) and be offered the one-time shell-hook installation on the spot |
+| `--auto-inject` | Opt into transparent shim injection (`auto_inject = true` in `envy.toml`) |
 
 ## Examples
 
 ```bash
 cd my-project
 envy init
-# or opt into auto-injection from the start (no more `envy run --` prefix):
+# or opt into shim injection from the start (no more `envy run --` prefix):
 envy init --auto-inject
 #   auto-inject enabled.
-#   Detected shell: zsh — append the envy auto-inject hook to /Users/you/.zshrc? [y/N]
+#   next steps:
+#     1. envy reshim
+#     2. envy shell-init zsh >> ~/.zshrc
 ```
 
 ## How it works
@@ -44,13 +46,10 @@ manager (Keychain / Credential Manager / Secret Service). In headless
 environments without a keyring daemon, exporting `ENVY_PASSPHRASE` activates
 the deterministic fallback key (ephemeral vault — dummy values only).
 
-With `--auto-inject`, init becomes a one-step setup: after writing the manifest
-it detects your shell (from `$SHELL`) and asks whether to append the hook to
-your rc file (`~/.bashrc`, `~/.zshrc`, or `~/.config/fish/config.fish` —
-default answer `N`, so nothing is modified unless you confirm). Answering `y`
-installs it idempotently (re-running never duplicates); answering `n`, running
-without a TTY, or using powershell/nushell (no deterministic rc path) prints
-the manual one-liner instead. Restart your shell afterwards to activate.
+With `--auto-inject`, the manifest opts the project into shim injection from
+the start. The command then prints the two setup steps (`envy reshim` for this
+project's toolchains, shims on `PATH` once per machine) — nothing is installed
+or generated automatically. Restart your shell after adding the `PATH` line.
 
 **Exit codes**:
 
@@ -64,5 +63,6 @@ the manual one-liner instead. Restart your shell afterwards to activate.
 
 - [envy set](envy-set.md) — store your first secret after initialising
 - [envy run](envy-run.md) — inject secrets into a child process
-- [envy auto](envy-auto.md) — enable transparent auto-injection later (`envy auto on`)
-- [envy shell-init](envy-shell-init.md) — one-time shell setup auto-injection needs
+- [envy auto](envy-auto.md) — enable transparent shim injection later (`envy auto on`)
+- [envy reshim](envy-reshim.md) — generate shims after opting in
+- [envy shell-init](envy-shell-init.md) — one-time `PATH` setup shims need

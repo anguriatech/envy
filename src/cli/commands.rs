@@ -59,9 +59,9 @@ fn audit_best_effort(
 /// Creates `envy.toml` and registers a new project entry in the vault.
 /// This is the only handler that owns its own Vault connection.
 ///
-/// When `auto_inject` is true, the manifest opts into transparent shell
-/// auto-injection (`envy hook` + `eval "$(envy shell-init …)"`), so bare
-/// `npm run dev` picks up vault secrets without the `envy run --` prefix.
+/// When `auto_inject` is true, the manifest opts the project into transparent
+/// shim injection (`envy reshim` + shims on `PATH`), so bare `npm run dev`
+/// picks up vault secrets — scoped to the child, parent stays clean.
 ///
 /// # Errors
 /// - [`CliError::AlreadyInitialised`] — `envy.toml` exists in the cwd.
@@ -113,9 +113,9 @@ pub(super) fn cmd_init(auto_inject: bool) -> Result<(), CliError> {
     println!("✓ Initialised envy project {}.", project_id.as_str());
     if auto_inject {
         println!("auto-inject enabled.");
-        // One-step setup: offer to install the shell hook now. Best-effort —
-        // a declined prompt or unwritable rc file only prints manual steps.
-        super::shell::offer_hook_install();
+        // Same next steps as `envy auto on`: informational only, nothing is
+        // installed or generated automatically (see `envy reshim`).
+        super::shell::print_setup_next_steps();
         println!(
             "env: $ENVY_ENV or development. Disable anytime: envy auto off (or ENVY_AUTO_INJECT=0)."
         );

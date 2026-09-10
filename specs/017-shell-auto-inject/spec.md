@@ -1,8 +1,16 @@
 # Feature Specification: Transparent Shell Auto-Injection
 
+> **SUPERSEDED by `specs/018-transparent-shims/spec.md` (ADR-001).**
+> The prompt-hook export mechanism described below was implemented on an
+> unmerged branch and replaced before merge: exporting secrets into the
+> parent shell violates envy's containment guarantee. The motive, the
+> `auto_inject` manifest flag, `envy auto`, `envy shell-init`, and the manifest
+> tests were kept; hook plan/render/escaping and the rc installer were
+> dropped in favour of PATH shims. This document is retained for traceability.
+
 **Feature Branch**: `017-shell-auto-inject`
 **Created**: 2026-09-09
-**Status**: Implemented
+**Status**: Superseded
 **Input**: User description: "Today envy only injects secrets when commands are prefixed with `envy run --`. People (and AI agents) keep using the legacy `.env` flow because neither knows the prefix is required. After `envy init`, entering the project should inject envy variables instead of `.env` ones, with no prefix on every command."
 
 ## User Scenarios & Testing *(mandatory)*

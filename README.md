@@ -135,7 +135,7 @@ npm install -g @anguriatech/envy
 ```bash
 cd my-project
 envy init       # creates envy.toml (safe to commit)
-# or: envy init --auto-inject  # one-step: opts in + offers to install the shell hook
+# or: envy init --auto-inject  # opt into prefix-free runs via shims
 ```
 
 **Step 2 — Store secrets and run your app**
@@ -148,13 +148,12 @@ envy run -- npm run dev
 # secrets injected into the child process, never written to disk
 ```
 
-> Tired of prefixing every command? `envy auto on` + the one-time
-> `eval "$(envy shell-init <bash|zsh|fish|powershell|nushell>)"` setup
-> auto-exports vault secrets whenever you enter the project — bare
-> `npm run dev` just works for humans and AI agents alike, with envy values
-> winning over a legacy `.env` (warning printed). Environment via `$ENVY_ENV`,
-> kill-switch via `ENVY_AUTO_INJECT=0`. Prefer the scoped `envy run` in CI
-> and for production deploys. See `envy auto`, `envy shell-init`, `envy hook`.
+> Tired of prefixing every command? `envy auto on` + `envy reshim` + the
+> one-time shims-on-`PATH` line (`envy shell-init <shell>`, kept last in your
+> rc) make bare `npm run dev` just work — secrets stay scoped to the child
+> process and `env | grep KEY` stays empty in the parent. Environment via
+> `$ENVY_ENV`, diagnostics via `envy doctor`. See `envy auto`,
+> `envy reshim`, `envy shell-init`, `envy doctor`.
 
 **Step 3 — Seal and share with your team**
 
@@ -387,10 +386,12 @@ Every secret value travels through the codebase in `zeroize::Zeroizing<String>`.
 
 | Command | Alias | Description |
 |---------|-------|-------------|
-| [`envy init`](docs/commands/envy-init.md) | — | Create `envy.toml`, register project in vault (`--auto-inject` opts into transparent shell injection) |
-| [`envy auto [on\|off\|status]`](docs/commands/envy-auto.md) | — | Opt the project into transparent shell auto-injection (no more `envy run --` prefix) |
-| [`envy shell-init [SHELL]`](docs/commands/envy-shell-init.md) | — | Print the one-time shell setup snippet (`bash`/`zsh`/`fish`/`powershell`/`nushell`) |
-| [`envy hook [--shell SHELL]`](docs/commands/envy-hook.md) | — | Print `eval`-able exports for the current directory (called by the shell hook) |
+| [`envy init`](docs/commands/envy-init.md) | — | Create `envy.toml`, register project in vault (`--auto-inject` opts into shim injection) |
+| [`envy auto [on\|off\|status]`](docs/commands/envy-auto.md) | — | Opt the project into transparent shim injection (no more `envy run --` prefix) |
+| [`envy shell-init [SHELL]`](docs/commands/envy-shell-init.md) | — | Print the one-time shims-on-`PATH` line (`bash`/`zsh`/`fish`/`powershell`/`nushell`) |
+| [`envy reshim [--prune]`](docs/commands/envy-reshim.md) | — | Generate command shims for the project's toolchains |
+| [`envy shim add\|rm\|list`](docs/commands/envy-shim.md) | `remove` (rm) | Manage shims manually |
+| [`envy doctor [CMD...]`](docs/commands/envy-doctor.md) | — | Diagnose the shim setup (exit 0 clean, 1 findings) |
 | [`envy set KEY=VALUE [-e ENV] [--stdin]`](docs/commands/envy-set.md) | — | Store or update a secret |
 | [`envy get KEY [-e ENV]`](docs/commands/envy-get.md) | — | Print a single decrypted value to stdout |
 | [`envy list [-e ENV]`](docs/commands/envy-list.md) | `ls` | List all key names (values never printed by default) |

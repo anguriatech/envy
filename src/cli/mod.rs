@@ -14,6 +14,7 @@ mod commands;
 mod error;
 pub mod format;
 mod shell;
+mod shim;
 mod tui;
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -45,7 +46,7 @@ pub struct Cli {
     pub format: OutputFormat,
 }
 
-/// Action for `envy auto` (transparent shell auto-injection opt-in).
+/// Action for `envy auto` (per-project shim-injection opt-in).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 #[value(rename_all = "lowercase")]
 pub enum AutoAction {
@@ -66,11 +67,10 @@ pub enum Commands {
     ///
     /// Creates `envy.toml` (the project manifest) and registers a new project
     /// in the vault. Must be run once per project before any other command.
-    /// Pass `--auto-inject` for one-step transparent shell auto-injection:
-    /// it opts the project in and offers to install the shell hook on the spot.
+    /// Pass `--auto-inject` to opt the project into transparent shim injection:
+    /// follow with `envy reshim` (plus shims on `PATH`, once per machine).
     Init {
-        /// Opt into transparent shell auto-injection (`auto_inject = true`
-        /// in envy.toml) and be offered the one-time shell-hook installation.
+        /// Opt into shim injection (`auto_inject = true` in envy.toml).
         #[arg(long)]
         auto_inject: bool,
     },
@@ -312,48 +312,73 @@ pub enum Commands {
         action: HooksAction,
     },
 
-    /// Manage transparent shell auto-injection for this project.
+    /// Opt this project into transparent shim injection.
     ///
     /// `envy auto on` sets `auto_inject = true` in `envy.toml`; combined with
-    /// the one-time `eval "$(envy shell-init <shell>)"` setup, entering the
-    /// project directory auto-exports vault secrets (envy wins over a legacy
-    /// `.env`, with a warning) so bare `npm run dev` just works — humans and
-    /// AI agents no longer need the `envy run --` prefix. `ENVY_ENV` selects
-    /// the environment (default: development); `ENVY_AUTO_INJECT=0` disables
-    /// globally. Unlike the scoped `envy run`, auto-inject exports into your
-    /// interactive shell — prefer `envy run` in CI and for production.
+    /// `envy reshim` (shims for this project's toolchains) and the one-time
+    /// shims-on-`PATH` setup, bare `npm run dev` just works — secrets stay
+    /// scoped to the child process, the parent shell stays clean. `ENVY_ENV`
+    /// selects the environment (default: development); `ENVY_AUTO_INJECT=0`
+    /// disables globally. `envy run` remains equivalent for one-shot runs.
     Auto {
         /// `on` to enable, `off` to disable, `status` (default) to show state.
         action: Option<AutoAction>,
     },
 
-    /// Print the one-time shell setup snippet for auto-injection.
+    /// Print the one-time shell setup line for shims.
     ///
-    /// Add `eval "$(envy shell-init <shell>)"` to your shell profile
-    /// (~/.bashrc, ~/.zshrc, fish config.fish, $PROFILE, config.nu), restart
-    /// the shell, then `envy auto on` in each project. For direnv users, put
-    /// `eval "$(envy hook --shell bash)"` in the project's `.envrc` instead.
+    /// Prints `export PATH="$HOME/.envy/shims:$PATH"` in your shell's syntax —
+    /// paste it LAST in your shell profile, restart, then `envy auto on` +
+    /// `envy reshim` per project. For direnv users, `PATH_add ~/.envy/shims`
+    /// in the project's `.envrc` works instead.
     #[command(name = "shell-init")]
     ShellInit {
         /// Target shell (default: detected from `$SHELL`, else bash).
         shell: Option<shell::ShellKind>,
     },
 
-    /// Print `eval`-able exports for the current directory (prompt hook).
+    /// Generate command shims for the current project's toolchains.
     ///
-    /// Meant to be called by the shell hook installed via `envy shell-init`,
-    /// not by hand: stdout carries shell code (`eval "$(envy hook)"`),
-    /// stderr carries the `.env`-precedence warning. Always exits 0 — outside
-    /// a project (or with auto-inject off, or an unreachable vault) it prints
-    /// unload-cleanup code or nothing, never an error, so the prompt survives.
-    Hook {
-        /// Output syntax (the snippet always passes this explicitly).
-        #[arg(long, value_enum)]
-        shell: Option<shell::ShellKind>,
+    /// Detects `package.json`, `Cargo.toml`, … in the manifest directory and
+    /// creates `~/.envy/shims/<cmd>` delegating to `envy exec`. Needs
+    /// `auto on` to inject (otherwise shims pass through). No vault access.
+    Reshim {
+        /// Remove auto-generated shims no longer detected (manual ones kept).
+        #[arg(long)]
+        prune: bool,
+    },
 
+    /// Manage command shims manually (global, no project needed).
+    Shim {
+        #[command(subcommand)]
+        action: ShimAction,
+    },
+
+    /// Resolve the real binary outside the shims dir and run it (hidden).
+    ///
+    /// Plumbing behind `~/.envy/shims/<cmd>`: injects scoped exactly like
+    /// `envy run` when the project opted in, else spawns transparently.
+    /// Hidden because humans should use shims or `envy run`, never this.
+    #[command(hide = true)]
+    Exec {
         /// Target environment (default: `$ENVY_ENV` or development).
         #[arg(short = 'e', long = "env", value_name = "ENV")]
         env: Option<String>,
+
+        /// Command and arguments to execute (everything after `--`).
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
+    },
+
+    /// Diagnose the shim setup: `PATH`, order, coverage.
+    ///
+    /// Checks shims on `PATH`, order vs version managers, project coverage
+    /// (`reshim` hint), and per-command resolution. Exit 0 clean, 1 findings.
+    /// Never touches the vault.
+    Doctor {
+        /// Also check coverage for these commands.
+        #[arg(value_name = "CMD")]
+        commands: Vec<String>,
     },
 }
 
@@ -370,6 +395,24 @@ pub enum HooksAction {
         #[arg(long)]
         force: bool,
     },
+}
+
+/// Subcommands of `envy shim` (manual shim management).
+#[derive(Debug, Clone, Subcommand)]
+pub enum ShimAction {
+    /// Create a shim for `NAME` (manual provenance — safe from `--prune`).
+    Add {
+        /// Command name to shim (letters, digits, dot, dash, underscore).
+        name: String,
+    },
+    /// Delete the shim for `NAME`.
+    #[command(visible_alias = "remove")]
+    Rm {
+        /// Command name whose shim should be removed.
+        name: String,
+    },
+    /// List installed shim names, one per line.
+    List,
 }
 
 // ---------------------------------------------------------------------------
@@ -460,11 +503,27 @@ pub fn run() -> i32 {
         };
     }
 
-    // --- Hook: prompt hook, must never break the shell. It owns its own
-    // lightweight flow (no manifest/vault errors propagate) and always
-    // exits 0. Handled before ~/.envy creation so a cold machine stays silent.
-    if let Commands::Hook { shell, env } = command {
-        return shell::cmd_hook(*shell, env.as_deref());
+    // --- Shim: manual shim management is global (no manifest/vault needed). ---
+    if let Some(Commands::Shim { action }) = cli.command {
+        return match shim::cmd_shim(action) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("{}", format_cli_error(&e));
+                cli_exit_code(&e)
+            }
+        };
+    }
+
+    // --- Exec: hidden shim plumbing. Owns its flow (fast path needs no
+    // manifest; inject path opens the vault lazily) and proxies exit codes.
+    if let Some(Commands::Exec { env, command }) = cli.command {
+        return shim::cmd_exec(env.as_deref(), &command);
+    }
+
+    // --- Doctor: diagnostics read manifest flags + fs only, never the vault.
+    // Handled before ~/.envy creation so it works on a cold machine.
+    if let Some(Commands::Doctor { commands }) = cli.command {
+        return shim::cmd_doctor(&commands);
     }
 
     // --- Ensure ~/.envy/ exists for every command (including Init). ---
@@ -517,6 +576,18 @@ pub fn run() -> i32 {
                         cli_exit_code(&e)
                     }
                 }
+            }
+        };
+    }
+
+    // --- Reshim: needs the manifest dir (project root) for detectors, but
+    // never the vault or keyring — file generation only.
+    if let Some(Commands::Reshim { prune }) = cli.command {
+        return match shim::cmd_reshim(&manifest_path, prune) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("{}", format_cli_error(&e));
+                cli_exit_code(&e)
             }
         };
     }
@@ -805,7 +876,13 @@ pub fn run() -> i32 {
 
         Commands::ShellInit { .. } => unreachable!("ShellInit is handled above"),
 
-        Commands::Hook { .. } => unreachable!("Hook is handled above"),
+        Commands::Reshim { .. } => unreachable!("Reshim is handled above"),
+
+        Commands::Shim { .. } => unreachable!("Shim is handled above"),
+
+        Commands::Exec { .. } => unreachable!("Exec is handled above"),
+
+        Commands::Doctor { .. } => unreachable!("Doctor is handled above"),
 
         Commands::Completions { .. } => unreachable!("Completions is handled above"),
     }

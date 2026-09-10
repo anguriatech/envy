@@ -28,11 +28,10 @@ pub struct Manifest {
     #[serde(default = "default_rotation_reminder_days")]
     pub rotation_reminder_days: u32,
 
-    /// Opt-in flag for transparent shell auto-injection (`envy hook` /
-    /// `envy shell-init`). When `false` (default, including all manifests
-    /// written before this field existed), `envy hook` is a silent no-op that
-    /// only unloads previously exported keys. Enable with `envy auto on` or
-    /// `envy init --auto-inject`.
+    /// Opt-in flag for transparent shim injection (`envy reshim` + shims on
+    /// `PATH`). When `false` (default, including all manifests written before
+    /// this field existed), shims pass commands through without secrets.
+    /// Enable with `envy auto on` or `envy init --auto-inject`.
     #[serde(default)]
     pub auto_inject: bool,
 }
@@ -101,8 +100,8 @@ pub fn create_manifest(target_dir: &Path, project_id: &str) -> Result<(), CoreEr
 
 /// Creates `envy.toml` in `target_dir` with an explicit `auto_inject` flag.
 ///
-/// Same contract as [`create_manifest`], plus the transparent auto-injection
-/// opt-in used by `envy hook` / `envy shell-init`.
+/// Same contract as [`create_manifest`], plus the transparent injection
+/// opt-in used by shims (`envy reshim` + `envy exec`).
 pub fn create_manifest_with_options(
     target_dir: &Path,
     project_id: &str,
@@ -115,7 +114,7 @@ pub fn create_manifest_with_options(
     // The project_id is always a UUID (alphanumeric + hyphens), so no TOML
     // escaping is required.
     let content = format!(
-        "# Created by `envy init`. Do not delete — this file links the directory to its vault.\nproject_id = \"{}\"\n\n# Transparent shell auto-injection (`eval \"$(envy shell-init <shell>)\"` + `envy hook`).\n# When true, entering this directory auto-exports vault secrets into the shell,\n# taking precedence over a legacy `.env` file (a warning is printed).\n# Manage with `envy auto on|off|status`. Default: false.\nauto_inject = {}\n\n# Days a secret can go unmodified before `envy status` flags it for rotation.\n# Uncomment to override the default (90).\n# rotation_reminder_days = 90\n",
+        "# Created by `envy init`. Do not delete — this file links the directory to its vault.\nproject_id = \"{}\"\n\n# Transparent injection via shims, without the `envy run --` prefix.\n# When true, shimmed commands (see `envy reshim`) run with vault secrets\n# injected into the child process only — the parent shell stays clean.\n# Manage with `envy auto on|off|status`. Default: false.\nauto_inject = {}\n\n# Days a secret can go unmodified before `envy status` flags it for rotation.\n# Uncomment to override the default (90).\n# rotation_reminder_days = 90\n",
         project_id, auto_inject
     );
     // `create_new(true)` fails with AlreadyExists if the file exists,

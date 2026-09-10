@@ -49,10 +49,10 @@ exits `1`; if the binary cannot be executed, it exits `127` (like the shell).
 `get`/`set`/`rm` actions performed by the child are recorded in the audit log.
 
 > Tired of prefixing every command? [envy auto](envy-auto.md) +
-> [envy shell-init](envy-shell-init.md) transparently export vault secrets when
-> you enter the project, so bare `npm run dev` just works (envy wins over a
-> legacy `.env`, with a warning). `envy run` remains the scoped choice for
-> CI and production deploys.
+> [envy reshim](envy-reshim.md) plus shims on `PATH` ([envy shell-init](envy-shell-init.md),
+> once per machine) make bare `npm run dev` just work — same scoped guarantees,
+> parent shell stays clean. `envy run` remains equivalent for one-shot runs, CI,
+> and commands without a shim.
 
 **Exit codes**:
 
@@ -66,6 +66,7 @@ exits `1`; if the binary cannot be executed, it exits `127` (like the shell).
 ## Related commands
 
 - [envy set](envy-set.md) — store the secrets `run` injects
-- [envy auto](envy-auto.md) — transparent auto-injection (no prefix needed)
+- [envy auto](envy-auto.md) — transparent shim injection (no prefix needed)
+- [envy exec](envy-exec.md) — the hidden plumbing shims call (same guarantees)
 - [envy status](envy-status.md) — check vault ↔ `envy.enc` sync first
 - [envy scan](envy-scan.md) — ensure no plaintext copies exist before running

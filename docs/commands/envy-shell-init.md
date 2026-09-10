@@ -1,13 +1,14 @@
 # envy shell-init
 
-Print the one-time shell setup snippet for transparent auto-injection.
+Print the one-time `PATH` line that activates shims.
 
 ## What it does
 
-Prints shell code that installs a `cd`/prompt hook calling
-[envy hook](envy-hook.md) on every navigation. Do this once per machine; then
-`envy auto on` per project. After that, vault secrets are auto-exported when you
-enter the project and unloaded when you leave — no `envy run --` prefix needed.
+Prints `export PATH="$HOME/.envy/shims:$PATH"` in your shell's syntax. Paste
+it **last** in your shell profile and restart: from then on, shimmed commands
+(`npm`, `cargo`, …) resolve to `~/.envy/shims/` first and inject vault secrets
+scoped to the child process — the parent shell stays clean. Do this once per
+machine; then `envy auto on` + `envy reshim` per project.
 
 ## Aliases
 
@@ -28,50 +29,44 @@ envy shell-init [bash|zsh|fish|powershell|nushell]
 ## Examples
 
 ```bash
-# bash — preview, then append to ~/.bashrc and restart the shell
+# bash — preview, then append LAST to ~/.bashrc and restart
 envy shell-init bash
 envy shell-init bash >> ~/.bashrc
 
-# zsh — append to ~/.zshrc
+# zsh — append LAST to ~/.zshrc
 envy shell-init zsh >> ~/.zshrc
 
-# fish — append to the fish config
+# fish — append near the end of the fish config
 envy shell-init fish >> ~/.config/fish/config.fish
 
-# powershell — add to $PROFILE:
-#   Invoke-Expression (& envy shell-init powershell | Out-String)
+# powershell — paste the output into $PROFILE
 envy shell-init powershell
 
-# nushell — paste into config.nu ($nu.config-path)
+# nushell — paste the output into config.nu ($nu.config-path)
 envy shell-init nushell
 
-# direnv users — no shell-init needed; put this in the project's .envrc instead:
-eval "$(envy hook --shell bash)"
-# then: direnv allow
+# direnv users — PATH_add ~/.envy/shims in the project's .envrc instead
 ```
 
 > **Note**: Examples use dummy values only — never commit real secrets.
 
 ## How it works
 
-The snippet is static text (no vault or manifest access): it defines an
-`__envy_hook` function that runs `envy hook --shell <shell>` and `eval`s its
-stdout (warnings arrive on stderr, so they stay visible). Leaving a project
-unsets previously exported keys via the `$__ENVY_KEYS` tracking variable.
-`ENVY_AUTO_INJECT=0` disables the hook globally.
-
-Security tradeoff: unlike the scoped `envy run`, auto-inject exports secrets into
-your interactive shell, visible to every child process. Prefer `envy run` in CI
-and for production deploys.
+The output is static text (no vault, manifest, or rc access — nothing is ever
+installed automatically): one `PATH`-prepend line plus ordering guidance.
+"Last in your rc" matters because version managers (fnm/nvm/mise/…) prepend on
+every prompt and would otherwise shadow the shims. Verify with
+`which -a npm` (shim first) and `envy doctor`.
 
 **Exit codes**:
 
 | Code | Meaning |
 |------|---------|
-| `0` | Success (always — printing a snippet cannot fail) |
+| `0` | Success (always — printing a line cannot fail) |
 
 ## Related commands
 
-- [envy auto](envy-auto.md) — opt a project in/out (`envy auto on`)
-- [envy hook](envy-hook.md) — what the installed hook calls
-- [envy run](envy-run.md) — scoped one-shot injection
+- [envy auto](envy-auto.md) — opt a project in (`envy auto on`)
+- [envy reshim](envy-reshim.md) — generate the shims the `PATH` line activates
+- [envy doctor](envy-doctor.md) — verify the line works
+- [envy run](envy-run.md) — scoped one-shot injection without any setup
