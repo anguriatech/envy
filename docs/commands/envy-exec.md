@@ -44,7 +44,10 @@ recurse into itself — including npm-spawns-npx chains), walks up for
 implementation (one shared spawn/audit/exit-code path) or spawns directly on
 the fast path. Explicit paths (`./x`, `/bin/y`) bypass lookup by definition.
 Vault or keyring failures are loud (stderr, exit 4) — a shim never runs naked
-silently in an opted-in project.
+silently in an opted-in project. On Windows, `.cmd`/`.bat` targets route
+through `cmd.exe /D /C` (`CreateProcess` cannot execute batch files directly);
+parameters with cmd metacharacters (`&|^%`) keep cmd's native quoting quirks,
+same as npm scripts on Windows.
 
 **Exit codes**:
 

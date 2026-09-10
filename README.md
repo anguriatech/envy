@@ -389,7 +389,7 @@ Every secret value travels through the codebase in `zeroize::Zeroizing<String>`.
 | [`envy init`](docs/commands/envy-init.md) | — | Create `envy.toml`, register project in vault (`--auto-inject` opts into shim injection) |
 | [`envy auto [on\|off\|status]`](docs/commands/envy-auto.md) | — | Opt the project into transparent shim injection (no more `envy run --` prefix) |
 | [`envy shell-init [SHELL]`](docs/commands/envy-shell-init.md) | — | Print the one-time shims-on-`PATH` line (`bash`/`zsh`/`fish`/`powershell`/`nushell`) |
-| [`envy reshim [--prune]`](docs/commands/envy-reshim.md) | — | Generate command shims for the project's toolchains |
+| [`envy reshim [--prune] [--force]`](docs/commands/envy-reshim.md) | — | Generate command shims for the project's toolchains |
 | [`envy shim add\|rm\|list`](docs/commands/envy-shim.md) | `remove` (rm) | Manage shims manually |
 | [`envy doctor [CMD...]`](docs/commands/envy-doctor.md) | — | Diagnose the shim setup (exit 0 clean, 1 findings) |
 | [`envy set KEY=VALUE [-e ENV] [--stdin]`](docs/commands/envy-set.md) | — | Store or update a secret |

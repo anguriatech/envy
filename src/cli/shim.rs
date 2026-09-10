@@ -307,13 +307,24 @@ pub(super) fn prune_shims(shims: &Path, wanted: &[String]) -> Vec<String> {
 
 /// Shim names become file names under `~/.envy/shims` — reject path tricks
 /// (separators, dot-dirs, hidden files) rather than sanitising silently.
+/// Executable extensions (`.cmd`/`.bat`) are rejected too: they would double
+/// up (`npm.cmd` → `npm.cmd.cmd`) or silently never fire, never what the
+/// user meant.
 pub(super) fn is_valid_shim_name(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('.')
         && name != ".."
+        && !has_executable_extension(name)
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+}
+
+/// True for names that already carry a Windows executable extension —
+/// case-insensitive, since platform lookup is.
+fn has_executable_extension(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with(".cmd") || lower.ends_with(".bat")
 }
 
 // ---------------------------------------------------------------------------
@@ -437,15 +448,10 @@ fn auto_inject_killed() -> bool {
 // ---------------------------------------------------------------------------
 
 /// Spawns `bin` transparently without touching the vault (fast path for
-/// opted-out / project-less invocations). Same exit-code contract as `run`.
+/// opted-out / project-less invocations). Delegates to the shared spawn in
+/// `commands` so Windows batch routing applies here too.
 fn spawn_direct(bin: &Path, args: &[String]) -> i32 {
-    match std::process::Command::new(bin).args(args).status() {
-        Ok(status) => status.code().unwrap_or(1),
-        Err(e) => {
-            eprintln!("error: failed to execute `{}`: {}", bin.display(), e);
-            127
-        }
-    }
+    super::commands::spawn_transparent(bin, args)
 }
 
 /// `envy reshim [--prune]` — generate shims for the current project's
@@ -454,6 +460,15 @@ pub(super) fn cmd_reshim(manifest_dir: &Path, prune: bool, force: bool) -> Resul
     let shims =
         shims_dir().ok_or_else(|| CliError::Output("cannot determine home directory".into()))?;
     std::fs::create_dir_all(&shims).map_err(|e| CliError::Output(e.to_string()))?;
+    // The flag lives in the manifest we were given (re-read, no vault).
+    // Generating while off is harmless (shims pass through), but say so —
+    // otherwise "reshim ran and nothing injects" is indistinguishable magic.
+    let auto_on = crate::core::find_manifest(manifest_dir)
+        .map(|(manifest, _)| manifest.auto_inject)
+        .unwrap_or(false);
+    if !auto_on {
+        println!("note: auto-inject is off here — shims will pass through until `envy auto on`.");
+    }
     let wanted = detect_commands(manifest_dir);
     let mut refreshed = Vec::new();
     if force {
@@ -891,6 +906,12 @@ mod tests {
         for bad in ["", ".", "..", ".hidden", "a/b", "a\\b", "a b", "a;b", "a$"] {
             assert!(!is_valid_shim_name(bad), "{bad} must be rejected");
         }
+        for bad_ext in ["x.cmd", "x.BAT", "npm.CMD"] {
+            assert!(
+                !is_valid_shim_name(bad_ext),
+                "{bad_ext} must be rejected (would double the extension)"
+            );
+        }
     }
 
     #[test]
@@ -976,6 +997,15 @@ mod tests {
             "without the skip, the shim would win"
         );
         assert_eq!(find_in_dirs("nope-no-tool", &dirs, &shims), None);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn batch_detection_is_case_insensitive() {
+        assert!(crate::cli::commands::is_batch_file(Path::new("npm.cmd")));
+        assert!(crate::cli::commands::is_batch_file(Path::new("X.BAT")));
+        assert!(!crate::cli::commands::is_batch_file(Path::new("npm")));
+        assert!(!crate::cli::commands::is_batch_file(Path::new("npm.exe")));
     }
 
     #[test]

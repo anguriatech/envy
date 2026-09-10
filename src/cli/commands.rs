@@ -326,6 +326,75 @@ pub(super) fn cmd_rm(
 }
 
 // ---------------------------------------------------------------------------
+// Child spawning shared by `run` and (via `exec`) shims
+// ---------------------------------------------------------------------------
+
+/// Maps a spawn outcome to the `run` exit-code contract: exact child code,
+/// `1` on signal kill (`status.code()` → `None`), `127` when unspawnable.
+pub(super) fn exit_code_of(
+    result: std::io::Result<std::process::ExitStatus>,
+    bin: &str,
+) -> i32 {
+    match result {
+        Ok(status) => status.code().unwrap_or(1),
+        Err(e) => {
+            eprintln!("error: failed to execute `{bin}`: {e}");
+            127 // conventional POSIX "command not found" exit code
+        }
+    }
+}
+
+/// True for `.cmd`/`.bat` targets. `CreateProcess` cannot execute batch files
+/// directly (error 193), so Windows callers route them through `cmd.exe`.
+/// Always false elsewhere (compiled out).
+#[cfg(windows)]
+pub(super) fn is_batch_file(bin: &Path) -> bool {
+    bin.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| {
+        ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat")
+    })
+}
+
+/// Spawns `bin` with `args` plus secret `envs`, routing Windows batch files
+/// through `cmd.exe /D /C`. The single spawn implementation behind `run` and
+/// `exec` (hence shims) — including npm-style `.cmd` commands on Windows.
+/// Secret values stay in `Zeroizing` containers until process spawn.
+pub(super) fn spawn_with_secrets(
+    bin: &Path,
+    args: &[String],
+    secrets: &std::collections::HashMap<String, zeroize::Zeroizing<String>>,
+) -> i32 {
+    #[cfg(windows)]
+    if is_batch_file(bin) {
+        // `cmd /D` skips AutoRun; args ride as separate argv entries (Rust
+        // quotes for CreateProcess). Parameters with cmd metacharacters
+        // (`&|^%`) keep cmd's native quoting quirks — same as npm scripts.
+        let mut wrapped = std::process::Command::new("cmd");
+        wrapped.arg("/D").arg("/C").arg(bin).args(args);
+        wrapped.envs(secrets.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        return exit_code_of(wrapped.status(), &bin.display().to_string());
+    }
+    let mut child = std::process::Command::new(bin);
+    child.args(args);
+    child.envs(secrets.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+    exit_code_of(child.status(), &bin.display().to_string())
+}
+
+/// Transparent spawn without secrets (fast path), with Windows batch routing.
+/// Shared by `exec`'s project-less path.
+pub(super) fn spawn_transparent(bin: &Path, args: &[String]) -> i32 {
+    #[cfg(windows)]
+    if is_batch_file(bin) {
+        let mut wrapped = std::process::Command::new("cmd");
+        wrapped.arg("/D").arg("/C").arg(bin).args(args);
+        return exit_code_of(wrapped.status(), &bin.display().to_string());
+    }
+    exit_code_of(
+        std::process::Command::new(bin).args(args).status(),
+        &bin.display().to_string(),
+    )
+}
+
+// ---------------------------------------------------------------------------
 // T025 — cmd_run
 // ---------------------------------------------------------------------------
 
@@ -365,22 +434,9 @@ pub(super) fn cmd_run(
         .split_first()
         .expect("clap guarantees at least one element after --");
 
-    match std::process::Command::new(bin)
-        .args(args)
-        // Inject secrets on top of the inherited environment.
-        .envs(secrets.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-        .status()
-    {
-        Ok(status) => {
-            // `status.code()` returns None when the child was killed by a Unix signal.
-            // Fall back to 1 (generic failure) — full signal forwarding is Phase 3 work.
-            status.code().unwrap_or(1)
-        }
-        Err(e) => {
-            eprintln!("error: failed to execute `{}`: {}", bin, e);
-            127 // conventional POSIX "command not found" exit code
-        }
-    }
+    // Secrets are injected **in addition to** the inherited environment, not
+    // as a replacement. Single spawn implementation shared with `exec`.
+    spawn_with_secrets(Path::new(bin), args, &secrets)
 }
 
 // ---------------------------------------------------------------------------

@@ -28,16 +28,22 @@ non-ignored E2E (redirected HOME + unique names + cleanup).
 
 ## CLI — shim.rs (new)
 
-- [x] `shims_dir`, detector table (docker excluded, documented) +
-      `detect_commands`
-- [x] Shim templates (POSIX LF + `.cmd` CRLF), provenance headers,
-      write-skip-if-exists, prune (auto-only), list, name validation
+- [x] `shims_dir`, detector table (compose→docker; bare `Dockerfile`
+      excluded, documented) + `detect_commands`
+- [x] Shim templates (POSIX LF + `.cmd` CRLF), provenance headers + version
+      stamp, write-skip-if-exists, prune (auto-only), list, name validation
+      (incl. `.cmd`/`.bat` rejection)
 - [x] `resolve_real` (PATH-minus-shims, PATHEXT on Windows, explicit paths
-      pass through) + `first_on_path` sharing with doctor
-- [x] `cmd_reshim` (vault-free, `--prune`), `cmd_shim` (global),
-      `cmd_exec` (hidden; delegates inject path to `cmd_run`; loud failures),
-      `cmd_doctor` (vault-free; exit 0/1)
-- [x] Unit tests: detectors, templates, prune, names, resolution skip logic
+      pass through) + `first_on_path` sharing with doctor; canonical
+      `same_dir` skip (symlink/case-proof) + test
+- [x] `cmd_reshim` (vault-free, `--prune`, `--force` preserving provenance,
+      off-flag note), `cmd_shim` (global), `cmd_exec` (hidden; delegates
+      inject path to `cmd_run`; loud failures; kill-switch only, no
+      force-enable), `cmd_doctor` (vault-free; C0–C5; exit 0/1)
+- [x] Shared spawn (`spawn_with_secrets`/`spawn_transparent`/`exit_code_of`)
+      incl. Windows `.cmd`/`.bat` routing through `cmd.exe`
+- [x] Unit tests: detectors, templates, version/refresh, prune, names,
+      resolution skip logic, kill-switch, batch detection (Windows)
 
 ## CLI — wiring
 

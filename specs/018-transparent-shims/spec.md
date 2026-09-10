@@ -192,7 +192,9 @@ validators and resolution.
 - **FR-005**: `envy exec` (hidden) MUST resolve outside the shims dir
   (anti-recursion; explicit paths pass through), inject scoped exactly like
   `run` when opted in (audited as `run`), pass through directly otherwise
-  (zero vault access), fail loud (stderr, 127 not-found / 4 vault).
+  (zero vault access), fail loud (stderr, 127 not-found / 4 vault). One shared
+  spawn implementation with `run`, including Windows `.cmd`/`.bat` routing
+  through `cmd.exe` (without it, npm-style commands cannot spawn on Windows).
 - **FR-006**: `envy shim add|rm|list` MUST be global (no manifest needed);
   names validated (`[A-Za-z0-9_.-]+`, no leading dot, not `.`/`..`) → exit 2
   (`InvalidShimName`, no new exit code); `rm` of a missing shim exits 1.

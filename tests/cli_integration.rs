@@ -806,6 +806,39 @@ fn exec_outside_project_proxies_without_vault() {
 }
 
 // ---------------------------------------------------------------------------
+// 018 — exec spawns Windows batch files through cmd.exe (no keyring)
+// ---------------------------------------------------------------------------
+
+/// `CreateProcess` cannot execute `.cmd` directly (error 193): the spawn
+/// layer must route batch files through the interpreter. Hermetic (a temp
+/// probe, no manifest so no vault) so it runs on every Windows CI job.
+#[test]
+#[cfg(windows)]
+fn exec_spawns_batch_files_through_cmd() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let probe = tmp.path().join("probe-envy.cmd");
+    std::fs::write(&probe, "@echo shim-probe-ok\r\n").expect("write probe");
+    let out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["exec", "--"])
+        .arg(&probe)
+        .current_dir(tmp.path())
+        .stdin(Stdio::null())
+        .env_remove("ENVY_ENV")
+        .env_remove("ENVY_AUTO_INJECT")
+        .output()
+        .expect("failed to spawn envy exec");
+    assert!(
+        out.status.success(),
+        "exec must run batch files, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("shim-probe-ok"),
+        "batch output must pass through"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 018 — doctor findings without vault or keyring
 // ---------------------------------------------------------------------------
 
