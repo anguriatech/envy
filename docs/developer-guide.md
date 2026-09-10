@@ -75,7 +75,7 @@ envy/
 ├── src/
 │   ├── main.rs           # Binary entry point — wires up clap and calls cli::run()
 │   ├── cli/
-│   │   ├── mod.rs        # Commands enum (incl. Auto/Hook/ShellInit), AutoAction, run() dispatch, artifact_path() helper
+│   │   ├── mod.rs        # Commands enum (incl. Auto/Reshim/Shim/Exec/Doctor), AutoAction/ShimAction, run() dispatch
 │   │   ├── commands.rs   # cmd_* handlers (pub(super)) — one function per subcommand
 │   │   ├── format.rs     # OutputFormat (table/json/dotenv/shell) — print_output, shell escaping
 │   │   ├── shell.rs      # ShellKind, PATH-line snippets, auto opt-in hints

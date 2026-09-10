@@ -48,11 +48,15 @@ envy doctor npm expo
 ## How it works
 
 Filesystem + manifest-flag reads only (safe on cold machines, no keyring):
+**C0** `envy` itself resolvable on `PATH` (every shim delegates to it);
 **C1** shims dir present on `PATH`; **C2** no known prepender (fnm, nvm,
-volta, mise, rbenv, pyenv, asdf) sits above it; **C3** inside an opted-in
-project, every detected command has a shim (else: run `reshim`); **C4** each
-named command's first `PATH` hit is the shim, another binary (naked run), or
-missing. Findings print their fix; only the exit code is machine-readable.
+volta, mise, rbenv, pyenv, asdf) sits above it — matched by whole path
+component, so `.../promise/...` never false-positives; **C3** inside an
+opted-in project, every detected command has a shim (else: run `reshim`);
+**C4** shims carry the current template version (else: `reshim --force`);
+**C5** each named command's first `PATH` hit is the shim, another binary
+(naked run), or missing. Findings print their fix; only the exit code is
+machine-readable.
 
 **Exit codes**:
 

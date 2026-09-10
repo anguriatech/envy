@@ -19,12 +19,13 @@ commands through untouched.
 ## Syntax & flags
 
 ```text
-envy reshim [--prune]
+envy reshim [--prune] [--force]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--prune` | Remove auto-generated shims no longer detected (manually added ones are kept) |
+| `--force` | Rewrite all installed shims with the current template (keeps provenance) |
 
 Detected by default: `package.json` → npm, npx, node · `yarn.lock` → yarn ·
 `pnpm-lock.yaml` → pnpm · `Cargo.toml` → cargo · `pyproject.toml` → python, uv ·
@@ -64,6 +65,10 @@ Reads trigger files in the manifest directory and writes dumb shims (an
 `exec envy exec …` shell script on Unix, a 2-line `.cmd` on Windows) with a
 provenance header (`auto` vs `manual`). Existing files are never overwritten;
 `--prune` deletes only `auto` shims outside the current detection set.
+`--force` refreshes every installed shim to the current template (a template
+change otherwise never propagates — files are never overwritten); provenance
+is preserved, so manual shims stay manual and a later `--prune` still
+respects them.
 Manifest read + filesystem only — no vault or keyring access, so it works on
 cold machines and in CI.
 

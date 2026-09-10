@@ -172,9 +172,11 @@ validators and resolution.
   script (executable bit, LF) on Unix, `.cmd` twin (CRLF) on Windows; both
   delegate to hidden `envy exec -- <name> "$@"` (`%*` on Windows) with a
   parseable provenance header (`envy-shim-source: auto|manual`).
-- **FR-003**: `envy reshim [--prune]` MUST work without vault/keyring access
-  (manifest read + fs only); exit 1 without manifest; `--prune` removes only
-  auto-provenance shims not detected in the current project.
+- **FR-003**: `envy reshim [--prune] [--force]` MUST work without
+  vault/keyring access (manifest read + fs only); exit 1 without manifest;
+  `--prune` removes only auto-provenance shims not detected in the current
+  project; `--force` rewrites all installed shims with the current template,
+  preserving provenance (never resurrects pruned names).
 - **FR-004**: Detector table v1: `package.json`→npm/npx/node,
   `yarn.lock`→yarn, `pnpm-lock.yaml`→pnpm, `Cargo.toml`→cargo,
   `pyproject.toml`→python/uv, `requirements.txt|setup.py`→python/pip,
@@ -194,10 +196,11 @@ validators and resolution.
 - **FR-006**: `envy shim add|rm|list` MUST be global (no manifest needed);
   names validated (`[A-Za-z0-9_.-]+`, no leading dot, not `.`/`..`) → exit 2
   (`InvalidShimName`, no new exit code); `rm` of a missing shim exits 1.
-- **FR-007**: `envy doctor [CMD...]` MUST never touch the vault; checks PATH
-  presence, order vs known prependers (fnm/nvm/volta/mise/rbenv/pyenv/asdf),
-  project coverage (auto on + missing shims → `reshim` hint), per-command
-  resolution; exit 0 clean / 1 findings.
+- **FR-007**: `envy doctor [CMD...]` MUST never touch the vault; checks envy
+  itself resolvable (C0), PATH presence (C1), order vs known prependers
+  matched by whole path component (C2), project coverage (C3), template
+  freshness via the stamped version (C4 → `reshim --force` hint), per-command
+  resolution (C5); exit 0 clean / 1 findings.
 - **FR-008**: `envy shell-init` MUST print static PATH lines only (no vault,
   manifest, rc, or prompt I/O); never auto-install (user pastes, keeps last).
 - **FR-009**: Shim names, PATH parsing, and resolution MUST be unit-tested

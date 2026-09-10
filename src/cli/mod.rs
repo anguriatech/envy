@@ -22,8 +22,8 @@ use format::OutputFormat;
 use std::io::Read;
 
 pub use error::{CliError, cli_exit_code, core_exit_code, format_cli_error, format_core_error};
-// Re-exported so the `ShellInit::shell` / `Hook::shell` fields of the public
-// `Commands` enum don't expose a less-visible type (`private_interfaces` lint).
+// Re-exported so the `ShellInit::shell` field of the public `Commands`
+// enum doesn't expose a less-visible type (`private_interfaces` lint).
 pub use shell::ShellKind;
 
 // ---------------------------------------------------------------------------
@@ -346,6 +346,10 @@ pub enum Commands {
         /// Remove auto-generated shims no longer detected (manual ones kept).
         #[arg(long)]
         prune: bool,
+
+        /// Rewrite all installed shims with the current template (keeps provenance).
+        #[arg(long)]
+        force: bool,
     },
 
     /// Manage command shims manually (global, no project needed).
@@ -582,8 +586,8 @@ pub fn run() -> i32 {
 
     // --- Reshim: needs the manifest dir (project root) for detectors, but
     // never the vault or keyring — file generation only.
-    if let Some(Commands::Reshim { prune }) = cli.command {
-        return match shim::cmd_reshim(&manifest_path, prune) {
+    if let Some(Commands::Reshim { prune, force }) = cli.command {
+        return match shim::cmd_reshim(&manifest_path, prune, force) {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("{}", format_cli_error(&e));
@@ -858,14 +862,7 @@ pub fn run() -> i32 {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("this project");
-            match shell::cmd_auto(
-                &vault,
-                &project_id,
-                &manifest,
-                &manifest_path,
-                action,
-                project_label,
-            ) {
+            match shell::cmd_auto(&manifest, &manifest_path, action, project_label) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{}", format_cli_error(&e));

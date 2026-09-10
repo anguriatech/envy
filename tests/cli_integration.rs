@@ -657,6 +657,55 @@ fn reshim_generates_and_prunes_hermetically() {
 }
 
 // ---------------------------------------------------------------------------
+// 018 — reshim --force refreshes stale templates, keeping provenance
+// ---------------------------------------------------------------------------
+
+/// A legacy shim (no version line) is rewritten with the current template by
+/// `--force`, preserving its manual marker. Hermetic via redirected HOME.
+#[test]
+fn reshim_force_refreshes_stale_keeping_provenance() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    let shims = home.join(".envy").join("shims");
+    std::fs::create_dir_all(&shims).expect("mkdir shims");
+    std::fs::write(
+        tmp.path().join("envy.toml"),
+        "project_id = \"00000000-0000-4000-8000-000000000003\"\nauto_inject = true\n",
+    )
+    .expect("write envy.toml");
+    let legacy = if cfg!(windows) {
+        shims.join("oldie.cmd")
+    } else {
+        shims.join("oldie")
+    };
+    std::fs::write(&legacy, "# legacy shim without version\n").expect("write legacy");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["reshim", "--force"])
+        .current_dir(tmp.path())
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .output()
+        .expect("failed to spawn envy reshim --force");
+    assert!(
+        out.status.success(),
+        "envy reshim --force must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Legacy content has no marker → refreshed as auto with the version line.
+    // (Manual preservation is unit-tested in `refresh_rewrites_stale`.)
+    let content = std::fs::read_to_string(&legacy).expect("read refreshed shim");
+    assert!(
+        content.contains("envy-shim-version: 1"),
+        "refreshed shim must carry the version"
+    );
+    assert!(
+        content.contains("envy exec -- oldie"),
+        "refreshed shim must delegate to exec"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 018 — shim add/rm/list is hermetic
 // ---------------------------------------------------------------------------
 
@@ -819,12 +868,18 @@ fn doctor_passes_with_shims_first_and_no_project() {
     let home = tmp.path().join("home");
     let shims = home.join(".envy").join("shims");
     std::fs::create_dir_all(&shims).expect("mkdir shims");
+    // C0 needs `envy` itself resolvable: controlled PATH = shims + test binary dir.
+    let envy_dir = std::path::Path::new(env!("CARGO_BIN_EXE_envy"))
+        .parent()
+        .expect("test binary has a parent dir");
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    let path_value = format!("{}{}{}", shims.display(), sep, envy_dir.display());
     let out = Command::new(env!("CARGO_BIN_EXE_envy"))
         .args(["doctor"])
         .current_dir(tmp.path())
         .env("HOME", &home)
         .env("USERPROFILE", &home)
-        .env("PATH", &shims)
+        .env("PATH", &path_value)
         .output()
         .expect("failed to spawn envy doctor");
     assert_eq!(

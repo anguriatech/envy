@@ -48,7 +48,7 @@ pub(super) fn detect_shell() -> ShellKind {
         ShellKind::Fish
     } else if base.contains("powershell") || base.contains("pwsh") {
         ShellKind::Powershell
-    } else if base.contains("nu") {
+    } else if base == "nu" || base == "nushell" {
         ShellKind::Nushell
     } else {
         ShellKind::Bash
@@ -145,7 +145,6 @@ pub(super) fn print_setup_next_steps() {
 // ---------------------------------------------------------------------------
 
 use crate::cli::error::CliError;
-use crate::db::{ProjectId, Vault};
 
 /// `envy shell-init [SHELL]` — prints the setup snippet. No vault, no manifest.
 pub(super) fn cmd_shell_init(shell: Option<ShellKind>) -> Result<(), CliError> {
@@ -157,19 +156,15 @@ pub(super) fn cmd_shell_init(shell: Option<ShellKind>) -> Result<(), CliError> {
 /// `envy auto [on|off|status]` — manages the per-project `auto_inject` flag.
 ///
 /// The flag opts the project into shim injection (`envy reshim` generates the
-/// shims; `envy exec` injects scoped like `run`). Never touches the shell.
+/// shims; `envy exec` injects scoped like `run`). Edits `envy.toml` only —
+/// deliberately no vault access, so a missing project row is irrelevant here.
 pub(super) fn cmd_auto(
-    vault: &Vault,
-    project_id: &ProjectId,
     manifest: &crate::core::Manifest,
     manifest_dir: &Path,
     action: Option<super::AutoAction>,
     project_label: &str,
 ) -> Result<(), CliError> {
     use super::AutoAction;
-    // Touch the vault so a missing project row surfaces the same way as
-    // every other command (the row is ensured by run() beforehand).
-    let _ = (vault, project_id);
     match action.unwrap_or(AutoAction::Status) {
         AutoAction::Status => {
             if manifest.auto_inject {
