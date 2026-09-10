@@ -179,8 +179,14 @@ validators and resolution.
   `yarn.lock`→yarn, `pnpm-lock.yaml`→pnpm, `Cargo.toml`→cargo,
   `pyproject.toml`→python/uv, `requirements.txt|setup.py`→python/pip,
   `go.mod`→go, `Makefile|makefile|GNUmakefile`→make, `justfile|.justfile`→just,
-  `Gemfile`→bundle, `composer.json`→composer. `docker` excluded by default
-  (image-layer leak risk; manual add allowed).
+  `Gemfile`→bundle, `composer.json`→composer, `pom.xml`→mvn,
+  `build.gradle|build.gradle.kts`→gradle, `mix.exs`→mix/elixir,
+  `Taskfile.yml|Taskfile.yaml`→task, `deno.json|deno.jsonc`→deno,
+  `bun.lockb|bunfig.toml`→bun,
+  `compose.yaml|compose.yml|docker-compose.yml|docker-compose.yaml`→docker/docker-compose.
+  Rule: triggers must reliably imply the command (no guessing). A bare
+  `Dockerfile` is excluded on purpose (build-dominated usage; injected env can
+  leak into image layers); manual `shim add docker` stays possible.
 - **FR-005**: `envy exec` (hidden) MUST resolve outside the shims dir
   (anti-recursion; explicit paths pass through), inject scoped exactly like
   `run` when opted in (audited as `run`), pass through directly otherwise

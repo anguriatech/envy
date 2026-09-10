@@ -29,11 +29,17 @@ envy reshim [--prune]
 Detected by default: `package.json` → npm, npx, node · `yarn.lock` → yarn ·
 `pnpm-lock.yaml` → pnpm · `Cargo.toml` → cargo · `pyproject.toml` → python, uv ·
 `requirements.txt`/`setup.py` → python, pip · `go.mod` → go · `Makefile` →
-make · `justfile` → just · `Gemfile` → bundle · `composer.json` → composer.
+make · `justfile` → just · `Gemfile` → bundle · `composer.json` → composer ·
+`pom.xml` → mvn · `build.gradle` → gradle · `mix.exs` → mix, elixir ·
+`Taskfile.yml` → task · `deno.json` → deno · `bun.lockb` → bun ·
+`compose.yaml` → docker, docker-compose.
 
-`docker` is deliberately excluded: injecting into `docker build` can leak
-secrets into image layers. Cover it explicitly with `envy shim add docker`
-only if you mean it.
+Rule: a trigger must reliably imply the command. A bare `Dockerfile` is
+deliberately not a trigger: its usage is dominated by `docker build`, where
+injected env can leak into image layers. Compose files imply runtime usage
+(`up`/`run`), so they are covered — and `envy shim add docker` remains
+possible for anything else. Cover project-specific CLIs (`expo`, `vercel`,
+…) the same way: one `shim add` and done.
 
 ## Examples
 

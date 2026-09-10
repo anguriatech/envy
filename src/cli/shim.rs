@@ -32,9 +32,11 @@ pub(super) fn shims_dir() -> Option<PathBuf> {
 
 /// One toolchain detector: trigger files in the project root imply commands.
 ///
-/// `docker` is deliberately absent: injecting into `docker build` can leak
-/// secrets into image layers. Manual `shim add docker` stays possible for
-/// flows the user explicitly opts into (`compose up`-style).
+/// Rule: the trigger must reliably imply the command (no guessing project
+/// contents). `docker` comes only from compose files — never from a bare
+/// `Dockerfile`, whose usage is dominated by `docker build`, where injected
+/// env can leak into image layers. Manual `shim add docker` stays possible
+/// for flows the user explicitly opts into (`compose up`-style).
 struct Detector {
     files: &'static [&'static str],
     commands: &'static [&'static str],
@@ -84,6 +86,39 @@ const DETECTORS: &[Detector] = &[
     Detector {
         files: &["composer.json"],
         commands: &["composer"],
+    },
+    Detector {
+        files: &["pom.xml"],
+        commands: &["mvn"],
+    },
+    Detector {
+        files: &["build.gradle", "build.gradle.kts"],
+        commands: &["gradle"],
+    },
+    Detector {
+        files: &["mix.exs"],
+        commands: &["mix", "elixir"],
+    },
+    Detector {
+        files: &["Taskfile.yml", "Taskfile.yaml"],
+        commands: &["task"],
+    },
+    Detector {
+        files: &["deno.json", "deno.jsonc"],
+        commands: &["deno"],
+    },
+    Detector {
+        files: &["bun.lockb", "bunfig.toml"],
+        commands: &["bun"],
+    },
+    Detector {
+        files: &[
+            "compose.yaml",
+            "compose.yml",
+            "docker-compose.yml",
+            "docker-compose.yaml",
+        ],
+        commands: &["docker", "docker-compose"],
     },
 ];
 
@@ -633,15 +668,35 @@ mod tests {
     #[test]
     fn detectors_map_trigger_files() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        std::fs::write(tmp.path().join("package.json"), "{}").expect("write");
-        std::fs::write(tmp.path().join("Cargo.toml"), "[package]").expect("write");
+        for file in [
+            "package.json",
+            "Cargo.toml",
+            "pom.xml",
+            "build.gradle.kts",
+            "mix.exs",
+            "Taskfile.yml",
+            "deno.json",
+            "bun.lockb",
+            "compose.yaml",
+        ] {
+            std::fs::write(tmp.path().join(file), "").expect("write trigger");
+        }
         assert_eq!(
             detect_commands(tmp.path()),
             vec![
+                "bun".to_string(),
                 "cargo".to_string(),
+                "deno".to_string(),
+                "docker".to_string(),
+                "docker-compose".to_string(),
+                "elixir".to_string(),
+                "gradle".to_string(),
+                "mix".to_string(),
+                "mvn".to_string(),
                 "node".to_string(),
                 "npm".to_string(),
                 "npx".to_string(),
+                "task".to_string(),
             ]
         );
     }
