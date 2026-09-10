@@ -331,10 +331,7 @@ pub(super) fn cmd_rm(
 
 /// Maps a spawn outcome to the `run` exit-code contract: exact child code,
 /// `1` on signal kill (`status.code()` → `None`), `127` when unspawnable.
-pub(super) fn exit_code_of(
-    result: std::io::Result<std::process::ExitStatus>,
-    bin: &str,
-) -> i32 {
+pub(super) fn exit_code_of(result: std::io::Result<std::process::ExitStatus>, bin: &str) -> i32 {
     match result {
         Ok(status) => status.code().unwrap_or(1),
         Err(e) => {
@@ -349,9 +346,9 @@ pub(super) fn exit_code_of(
 /// Always false elsewhere (compiled out).
 #[cfg(windows)]
 pub(super) fn is_batch_file(bin: &Path) -> bool {
-    bin.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| {
-        ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat")
-    })
+    bin.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
 }
 
 /// Spawns `bin` with `args` plus secret `envs`, routing Windows batch files
