@@ -17,16 +17,24 @@ project — before any other command. No secrets are written to disk.
 ## Syntax & flags
 
 ```text
-envy init
+envy init [--auto-inject]
 ```
 
-No flags.
+| Flag | Description |
+|------|-------------|
+| `--auto-inject` | Opt into transparent shim injection (`auto_inject = true` in `envy.toml`) |
 
 ## Examples
 
 ```bash
 cd my-project
 envy init
+# or opt into shim injection from the start (no more `envy run --` prefix):
+envy init --auto-inject
+#   auto-inject enabled.
+#   next steps:
+#     1. envy reshim
+#     2. envy shell-init zsh >> ~/.zshrc
 ```
 
 ## How it works
@@ -37,6 +45,11 @@ on first use and encrypted with a master key stored in your OS credential
 manager (Keychain / Credential Manager / Secret Service). In headless
 environments without a keyring daemon, exporting `ENVY_PASSPHRASE` activates
 the deterministic fallback key (ephemeral vault — dummy values only).
+
+With `--auto-inject`, the manifest opts the project into shim injection from
+the start. The command then prints the two setup steps (`envy reshim` for this
+project's toolchains, shims on `PATH` once per machine) — nothing is installed
+or generated automatically. Restart your shell after adding the `PATH` line.
 
 **Exit codes**:
 
@@ -50,3 +63,6 @@ the deterministic fallback key (ephemeral vault — dummy values only).
 
 - [envy set](envy-set.md) — store your first secret after initialising
 - [envy run](envy-run.md) — inject secrets into a child process
+- [envy auto](envy-auto.md) — enable transparent shim injection later (`envy auto on`)
+- [envy reshim](envy-reshim.md) — generate shims after opting in
+- [envy shell-init](envy-shell-init.md) — one-time `PATH` setup shims need

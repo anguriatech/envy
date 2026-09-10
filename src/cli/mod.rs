@@ -13,6 +13,8 @@
 mod commands;
 mod error;
 pub mod format;
+mod shell;
+mod shim;
 mod tui;
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -20,6 +22,9 @@ use format::OutputFormat;
 use std::io::Read;
 
 pub use error::{CliError, cli_exit_code, core_exit_code, format_cli_error, format_core_error};
+// Re-exported so the `ShellInit::shell` field of the public `Commands`
+// enum doesn't expose a less-visible type (`private_interfaces` lint).
+pub use shell::ShellKind;
 
 // ---------------------------------------------------------------------------
 // Clap argument structures
@@ -41,6 +46,18 @@ pub struct Cli {
     pub format: OutputFormat,
 }
 
+/// Action for `envy auto` (per-project shim-injection opt-in).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[value(rename_all = "lowercase")]
+pub enum AutoAction {
+    /// Enable auto-injection for this project (`auto_inject = true`).
+    On,
+    /// Disable auto-injection for this project (`auto_inject = false`).
+    Off,
+    /// Show whether auto-injection is on or off (default when omitted).
+    Status,
+}
+
 /// The set of subcommands recognised by the `envy` binary.
 ///
 /// Each variant maps to one `envy <subcommand>` invocation.
@@ -50,7 +67,13 @@ pub enum Commands {
     ///
     /// Creates `envy.toml` (the project manifest) and registers a new project
     /// in the vault. Must be run once per project before any other command.
-    Init,
+    /// Pass `--auto-inject` to opt the project into transparent shim injection:
+    /// follow with `envy reshim` (plus shims on `PATH`, once per machine).
+    Init {
+        /// Opt into shim injection (`auto_inject = true` in envy.toml).
+        #[arg(long)]
+        auto_inject: bool,
+    },
 
     /// Store or update a secret.
     ///
@@ -288,6 +311,79 @@ pub enum Commands {
         #[command(subcommand)]
         action: HooksAction,
     },
+
+    /// Opt this project into transparent shim injection.
+    ///
+    /// `envy auto on` sets `auto_inject = true` in `envy.toml`; combined with
+    /// `envy reshim` (shims for this project's toolchains) and the one-time
+    /// shims-on-`PATH` setup, bare `npm run dev` just works — secrets stay
+    /// scoped to the child process, the parent shell stays clean. `ENVY_ENV`
+    /// selects the environment (default: development); `ENVY_AUTO_INJECT=0`
+    /// disables globally. `envy run` remains equivalent for one-shot runs.
+    Auto {
+        /// `on` to enable, `off` to disable, `status` (default) to show state.
+        action: Option<AutoAction>,
+    },
+
+    /// Print the one-time shell setup line for shims.
+    ///
+    /// Prints `export PATH="$HOME/.envy/shims:$PATH"` in your shell's syntax —
+    /// paste it LAST in your shell profile, restart, then `envy auto on` +
+    /// `envy reshim` per project. For direnv users, `PATH_add ~/.envy/shims`
+    /// in the project's `.envrc` works instead.
+    #[command(name = "shell-init")]
+    ShellInit {
+        /// Target shell (default: detected from `$SHELL`, else bash).
+        shell: Option<shell::ShellKind>,
+    },
+
+    /// Generate command shims for the current project's toolchains.
+    ///
+    /// Detects `package.json`, `Cargo.toml`, … in the manifest directory and
+    /// creates `~/.envy/shims/<cmd>` delegating to `envy exec`. Needs
+    /// `auto on` to inject (otherwise shims pass through). No vault access.
+    Reshim {
+        /// Remove auto-generated shims no longer detected (manual ones kept).
+        #[arg(long)]
+        prune: bool,
+
+        /// Rewrite all installed shims with the current template (keeps provenance).
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Manage command shims manually (global, no project needed).
+    Shim {
+        #[command(subcommand)]
+        action: ShimAction,
+    },
+
+    /// Resolve the real binary outside the shims dir and run it (hidden).
+    ///
+    /// Plumbing behind `~/.envy/shims/<cmd>`: injects scoped exactly like
+    /// `envy run` when the project opted in, else spawns transparently.
+    /// Hidden because humans should use shims or `envy run`, never this.
+    #[command(hide = true)]
+    Exec {
+        /// Target environment (default: `$ENVY_ENV` or development).
+        #[arg(short = 'e', long = "env", value_name = "ENV")]
+        env: Option<String>,
+
+        /// Command and arguments to execute (everything after `--`).
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
+    },
+
+    /// Diagnose the shim setup: `PATH`, order, coverage.
+    ///
+    /// Checks shims on `PATH`, order vs version managers, project coverage
+    /// (`reshim` hint), and per-command resolution. Exit 0 clean, 1 findings.
+    /// Never touches the vault.
+    Doctor {
+        /// Also check coverage for these commands.
+        #[arg(value_name = "CMD")]
+        commands: Vec<String>,
+    },
 }
 
 /// Subcommands of `envy hooks`.
@@ -303,6 +399,24 @@ pub enum HooksAction {
         #[arg(long)]
         force: bool,
     },
+}
+
+/// Subcommands of `envy shim` (manual shim management).
+#[derive(Debug, Clone, Subcommand)]
+pub enum ShimAction {
+    /// Create a shim for `NAME` (manual provenance — safe from `--prune`).
+    Add {
+        /// Command name to shim (letters, digits, dot, dash, underscore).
+        name: String,
+    },
+    /// Delete the shim for `NAME`.
+    #[command(visible_alias = "remove")]
+    Rm {
+        /// Command name whose shim should be removed.
+        name: String,
+    },
+    /// List installed shim names, one per line.
+    List,
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +496,40 @@ pub fn run() -> i32 {
         return 0;
     }
 
+    // --- ShellInit: static snippet, no vault or manifest needed. ---
+    if let Commands::ShellInit { shell } = command {
+        return match shell::cmd_shell_init(*shell) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("{}", format_cli_error(&e));
+                cli_exit_code(&e)
+            }
+        };
+    }
+
+    // --- Shim: manual shim management is global (no manifest/vault needed). ---
+    if let Some(Commands::Shim { action }) = cli.command {
+        return match shim::cmd_shim(action) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("{}", format_cli_error(&e));
+                cli_exit_code(&e)
+            }
+        };
+    }
+
+    // --- Exec: hidden shim plumbing. Owns its flow (fast path needs no
+    // manifest; inject path opens the vault lazily) and proxies exit codes.
+    if let Some(Commands::Exec { env, command }) = cli.command {
+        return shim::cmd_exec(env.as_deref(), &command);
+    }
+
+    // --- Doctor: diagnostics read manifest flags + fs only, never the vault.
+    // Handled before ~/.envy creation so it works on a cold machine.
+    if let Some(Commands::Doctor { commands }) = cli.command {
+        return shim::cmd_doctor(&commands);
+    }
+
     // --- Ensure ~/.envy/ exists for every command (including Init). ---
     if let Some(vault_dir) = vault_path().parent() {
         if let Err(e) = std::fs::create_dir_all(vault_dir) {
@@ -391,8 +539,9 @@ pub fn run() -> i32 {
     }
 
     // --- Init is special: it manages its own vault lifecycle. ---
-    if let Some(Commands::Init) = &cli.command {
-        return match commands::cmd_init() {
+    if let Some(Commands::Init { auto_inject }) = &cli.command {
+        let auto_inject = *auto_inject;
+        return match commands::cmd_init(auto_inject) {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("{}", format_cli_error(&e));
@@ -435,6 +584,18 @@ pub fn run() -> i32 {
         };
     }
 
+    // --- Reshim: needs the manifest dir (project root) for detectors, but
+    // never the vault or keyring — file generation only.
+    if let Some(Commands::Reshim { prune, force }) = cli.command {
+        return match shim::cmd_reshim(&manifest_path, prune, force) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("{}", format_cli_error(&e));
+                cli_exit_code(&e)
+            }
+        };
+    }
+
     let master_key = match crate::crypto::get_or_create_master_key() {
         Ok(k) => k,
         Err(e) => {
@@ -467,7 +628,7 @@ pub fn run() -> i32 {
     }
 
     match cli.command.expect("command validated before vault setup") {
-        Commands::Init => unreachable!("Init is handled above"),
+        Commands::Init { .. } => unreachable!("Init is handled above"),
 
         Commands::Set {
             assignment,
@@ -695,6 +856,30 @@ pub fn run() -> i32 {
         }
 
         Commands::Hooks { .. } => unreachable!("Hooks is handled above"),
+
+        Commands::Auto { action } => {
+            let project_label = cwd
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("this project");
+            match shell::cmd_auto(&manifest, &manifest_path, action, project_label) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("{}", format_cli_error(&e));
+                    cli_exit_code(&e)
+                }
+            }
+        }
+
+        Commands::ShellInit { .. } => unreachable!("ShellInit is handled above"),
+
+        Commands::Reshim { .. } => unreachable!("Reshim is handled above"),
+
+        Commands::Shim { .. } => unreachable!("Shim is handled above"),
+
+        Commands::Exec { .. } => unreachable!("Exec is handled above"),
+
+        Commands::Doctor { .. } => unreachable!("Doctor is handled above"),
 
         Commands::Completions { .. } => unreachable!("Completions is handled above"),
     }

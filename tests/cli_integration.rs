@@ -470,3 +470,609 @@ fn cli_migrate_imports_env_file() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// 018 — shell-init prints a static PATH line (no keyring needed)
+// ---------------------------------------------------------------------------
+
+/// Verifies that `envy shell-init` works everywhere — outside any project and
+/// without touching the keyring — since it only prints a static `PATH` line.
+#[test]
+fn shell_init_prints_path_line_without_project_or_keyring() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let out = envy(&["shell-init", "bash"], tmp.path());
+    assert!(
+        out.status.success(),
+        "envy shell-init must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("$HOME/.envy/shims:$PATH"),
+        "bash snippet must prepend the shims dir, got: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("envy doctor"),
+        "snippet must point at doctor, got: {stdout:?}"
+    );
+    assert!(
+        !stdout.contains("__envy_hook"),
+        "no hook machinery may remain, got: {stdout:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 018 — auto flag round-trip via the binary
+// ---------------------------------------------------------------------------
+
+/// Verifies `envy auto status|on|off` through the binary: the flag round-trips
+/// through `envy.toml`. stdin is nulled for determinism under a TTY.
+#[test]
+#[ignore = "requires a live OS keyring daemon (Secret Service / Keychain)"]
+fn cli_auto_flag_round_trip() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    setup_project(tmp.path());
+
+    let status_out = envy(&["auto", "status"], tmp.path());
+    assert!(status_out.status.success());
+    assert!(
+        String::from_utf8_lossy(&status_out.stdout).contains("off"),
+        "fresh project must report auto-inject off"
+    );
+
+    let on_out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["auto", "on"])
+        .current_dir(tmp.path())
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to spawn envy auto on");
+    assert!(
+        on_out.status.success(),
+        "envy auto on must exit 0, stderr: {}",
+        String::from_utf8_lossy(&on_out.stderr)
+    );
+    let content = std::fs::read_to_string(tmp.path().join("envy.toml")).expect("read envy.toml");
+    assert!(
+        content.contains("auto_inject = true"),
+        "envy.toml must carry auto_inject = true, got:\n{content}"
+    );
+
+    let off_out = envy(&["auto", "off"], tmp.path());
+    assert!(off_out.status.success());
+    let content = std::fs::read_to_string(tmp.path().join("envy.toml")).expect("read envy.toml");
+    assert!(
+        content.contains("auto_inject = false"),
+        "envy.toml must carry auto_inject = false, got:\n{content}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 018 — init --auto-inject writes the flag without side effects
+// ---------------------------------------------------------------------------
+
+/// Verifies `envy init --auto-inject` exits 0, writes the flag, and only
+/// prints next steps (nothing is installed or generated automatically).
+#[test]
+#[ignore = "requires a live OS keyring daemon (Secret Service / Keychain)"]
+fn cli_init_auto_inject_is_non_interactive_safe() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["init", "--auto-inject"])
+        .current_dir(tmp.path())
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to spawn envy init");
+    assert!(
+        out.status.success(),
+        "envy init --auto-inject must exit 0 headless, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let content = std::fs::read_to_string(tmp.path().join("envy.toml")).expect("read envy.toml");
+    assert!(
+        content.contains("auto_inject = true"),
+        "envy.toml must carry auto_inject = true, got:\n{content}"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("auto-inject enabled."),
+        "must confirm the opt-in on stdout"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 018 — reshim generates and prunes without vault or keyring
+// ---------------------------------------------------------------------------
+
+/// Hermetic: HOME is redirected (shims land in a temp dir) and the manifest
+/// is hand-written, so no keyring, vault, or home pollution occurs. `reshim`
+/// needs a manifest but deliberately never opens the vault.
+#[test]
+fn reshim_generates_and_prunes_hermetically() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).expect("mkdir home");
+    std::fs::write(
+        tmp.path().join("envy.toml"),
+        "project_id = \"00000000-0000-4000-8000-000000000001\"\nauto_inject = true\n",
+    )
+    .expect("write envy.toml");
+    std::fs::write(tmp.path().join("package.json"), "{}").expect("write package.json");
+
+    let shim_path = |name: &str| -> std::path::PathBuf {
+        let dir = tmp.path().join("home").join(".envy").join("shims");
+        if cfg!(windows) {
+            dir.join(format!("{name}.cmd"))
+        } else {
+            dir.join(name)
+        }
+    };
+    let wanted = ["npm", "npx", "node"];
+    let pre: Vec<bool> = wanted.iter().map(|&n| shim_path(n).exists()).collect();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["reshim"])
+        .current_dir(tmp.path())
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .output()
+        .expect("failed to spawn envy reshim");
+    assert!(
+        out.status.success(),
+        "envy reshim must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for (&name, &was_there) in wanted.iter().zip(pre.iter()) {
+        let path = shim_path(name);
+        assert!(path.is_file(), "shim for {name} must exist");
+        if !was_there {
+            let content = std::fs::read_to_string(&path).expect("read shim");
+            assert!(
+                content.contains("envy-shim-source: auto"),
+                "shim for {name} must carry provenance"
+            );
+            assert!(
+                content.contains("envy exec --"),
+                "shim for {name} must delegate to exec"
+            );
+        }
+    }
+
+    // Prune after removing the trigger: auto shims go (unless pre-existing).
+    std::fs::remove_file(tmp.path().join("package.json")).expect("remove package.json");
+    let prune_out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["reshim", "--prune"])
+        .current_dir(tmp.path())
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .output()
+        .expect("failed to spawn envy reshim --prune");
+    assert!(prune_out.status.success());
+    for (&name, &was_there) in wanted.iter().zip(pre.iter()) {
+        if !was_there {
+            assert!(
+                !shim_path(name).exists(),
+                "prune must remove auto shim {name}"
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 018 — reshim --force refreshes stale templates, keeping provenance
+// ---------------------------------------------------------------------------
+
+/// A legacy shim (no version line) is rewritten with the current template by
+/// `--force`, preserving its manual marker. Hermetic via redirected HOME.
+#[test]
+fn reshim_force_refreshes_stale_keeping_provenance() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    let shims = home.join(".envy").join("shims");
+    std::fs::create_dir_all(&shims).expect("mkdir shims");
+    std::fs::write(
+        tmp.path().join("envy.toml"),
+        "project_id = \"00000000-0000-4000-8000-000000000003\"\nauto_inject = true\n",
+    )
+    .expect("write envy.toml");
+    let legacy = if cfg!(windows) {
+        shims.join("oldie.cmd")
+    } else {
+        shims.join("oldie")
+    };
+    std::fs::write(&legacy, "# legacy shim without version\n").expect("write legacy");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["reshim", "--force"])
+        .current_dir(tmp.path())
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .output()
+        .expect("failed to spawn envy reshim --force");
+    assert!(
+        out.status.success(),
+        "envy reshim --force must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Legacy content has no marker → refreshed as auto with the version line.
+    // (Manual preservation is unit-tested in `refresh_rewrites_stale`.)
+    let content = std::fs::read_to_string(&legacy).expect("read refreshed shim");
+    assert!(
+        content.contains("envy-shim-version: 1"),
+        "refreshed shim must carry the version"
+    );
+    assert!(
+        content.contains("envy exec -- oldie"),
+        "refreshed shim must delegate to exec"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 018 — shim add/rm/list is hermetic
+// ---------------------------------------------------------------------------
+
+/// Manual shim management through the binary with HOME redirected (plus a
+/// unique name and end-of-test removal, so even a HOME override miss on an
+/// exotic platform leaves no litter).
+#[test]
+fn shim_add_rm_list_is_hermetic() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    let run = |args: &[&str]| -> Output {
+        Command::new(env!("CARGO_BIN_EXE_envy"))
+            .args(args)
+            .current_dir(tmp.path())
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .output()
+            .expect("failed to spawn envy")
+    };
+
+    let bad = run(&["shim", "add", "a/b"]);
+    assert_eq!(
+        bad.status.code(),
+        Some(2),
+        "invalid shim name must exit 2, stderr: {}",
+        String::from_utf8_lossy(&bad.stderr)
+    );
+
+    let add = run(&["shim", "add", "envy-e2e-probe"]);
+    assert!(
+        add.status.success(),
+        "shim add must exit 0, stderr: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let list = run(&["shim", "list"]);
+    assert!(
+        String::from_utf8_lossy(&list.stdout).contains("envy-e2e-probe"),
+        "shim list must show the added shim"
+    );
+    let rm = run(&["shim", "rm", "envy-e2e-probe"]);
+    assert!(
+        rm.status.success(),
+        "shim rm must exit 0, stderr: {}",
+        String::from_utf8_lossy(&rm.stderr)
+    );
+    let list2 = run(&["shim", "list"]);
+    assert!(
+        !String::from_utf8_lossy(&list2.stdout).contains("envy-e2e-probe"),
+        "shim list must not show the removed shim"
+    );
+    let rm_missing = run(&["shim", "rm", "envy-e2e-probe"]);
+    assert_eq!(
+        rm_missing.status.code(),
+        Some(1),
+        "rm of a missing shim must exit 1"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 018 — exec outside a project proxies without vault or keyring
+// ---------------------------------------------------------------------------
+
+/// Runs the binary through itself: the outer `exec` takes the fast path (no
+/// manifest → direct spawn, zero vault access) and must proxy the inner exit
+/// code exactly. No shell, no keyring, all OSes.
+#[test]
+fn exec_outside_project_proxies_without_vault() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let me = env!("CARGO_BIN_EXE_envy");
+    // Inner clap parse error → exit 2, proving exact proxying.
+    let out = Command::new(me)
+        .args(["exec", "--", me, "--definitely-not-a-subcommand"])
+        .current_dir(tmp.path())
+        .stdin(Stdio::null())
+        .env_remove("ENVY_ENV")
+        .env_remove("ENVY_AUTO_INJECT")
+        .output()
+        .expect("failed to spawn envy exec");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "exec must proxy the child exit code"
+    );
+    // Inner success → exit 0 (`completions` needs no vault or manifest).
+    let ok = Command::new(me)
+        .args(["exec", "--", me, "completions", "bash"])
+        .current_dir(tmp.path())
+        .stdin(Stdio::null())
+        .env_remove("ENVY_ENV")
+        .env_remove("ENVY_AUTO_INJECT")
+        .output()
+        .expect("failed to spawn envy exec");
+    assert!(
+        ok.status.success(),
+        "exec must proxy success, stderr: {}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 018 — exec spawns Windows batch files through cmd.exe (no keyring)
+// ---------------------------------------------------------------------------
+
+/// `CreateProcess` cannot execute `.cmd` directly (error 193): the spawn
+/// layer must route batch files through the interpreter. Hermetic (a temp
+/// probe, no manifest so no vault) so it runs on every Windows CI job.
+#[test]
+#[cfg(windows)]
+fn exec_spawns_batch_files_through_cmd() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let probe = tmp.path().join("probe-envy.cmd");
+    std::fs::write(&probe, "@echo shim-probe-ok\r\n").expect("write probe");
+    let out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["exec", "--"])
+        .arg(&probe)
+        .current_dir(tmp.path())
+        .stdin(Stdio::null())
+        .env_remove("ENVY_ENV")
+        .env_remove("ENVY_AUTO_INJECT")
+        .output()
+        .expect("failed to spawn envy exec");
+    assert!(
+        out.status.success(),
+        "exec must run batch files, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("shim-probe-ok"),
+        "batch output must pass through"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 018 — doctor findings without vault or keyring
+// ---------------------------------------------------------------------------
+
+/// `doctor` inspects `PATH` and the manifest flag only: with shims absent from
+/// a controlled `PATH`, it exits 1 naming the problem — on every OS.
+#[test]
+fn doctor_flags_shims_missing_from_path() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["doctor"])
+        .current_dir(tmp.path())
+        .env("PATH", tmp.path().join("empty-bin"))
+        .output()
+        .expect("failed to spawn envy doctor");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "doctor must exit 1 with findings"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("not on PATH"),
+        "doctor must name the problem"
+    );
+}
+
+/// Inside an opted-in project (hand-written manifest, no vault) with shims
+/// missing, `doctor` reports coverage findings instead of failing.
+#[test]
+fn doctor_reports_missing_project_shims() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        tmp.path().join("envy.toml"),
+        "project_id = \"00000000-0000-4000-8000-000000000002\"\nauto_inject = true\n",
+    )
+    .expect("write envy.toml");
+    std::fs::write(tmp.path().join("package.json"), "{}").expect("write package.json");
+    let out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["doctor"])
+        .current_dir(tmp.path())
+        .env("PATH", tmp.path().join("empty-bin"))
+        .output()
+        .expect("failed to spawn envy doctor");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "doctor must exit 1 with findings"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("shims"),
+        "doctor must mention shims"
+    );
+}
+
+/// Full green cycle on Unix (HOME redirect is certain there): shims present
+/// first on a controlled `PATH`, no project — exit 0, all checks passed.
+#[test]
+#[cfg(unix)]
+fn doctor_passes_with_shims_first_and_no_project() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    let shims = home.join(".envy").join("shims");
+    std::fs::create_dir_all(&shims).expect("mkdir shims");
+    // C0 needs `envy` itself resolvable: controlled PATH = shims + test binary dir.
+    let envy_dir = std::path::Path::new(env!("CARGO_BIN_EXE_envy"))
+        .parent()
+        .expect("test binary has a parent dir");
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    let path_value = format!("{}{}{}", shims.display(), sep, envy_dir.display());
+    let out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["doctor"])
+        .current_dir(tmp.path())
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env("PATH", &path_value)
+        .output()
+        .expect("failed to spawn envy doctor");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "doctor must exit 0 when clean, stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("all checks passed"),
+        "doctor must confirm the clean state"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 018 — exec injects scoped (Unix: through a real shim on PATH)
+// ---------------------------------------------------------------------------
+
+/// Full chain through genuine `PATH` resolution: a `printenv` shim first on
+/// `PATH` injects the vault secret into the child only. Pre-existing user
+/// shims are never stolen or deleted (only ours is cleaned up).
+#[test]
+#[ignore = "requires a live OS keyring daemon (Secret Service / Keychain)"]
+#[cfg(unix)]
+fn cli_exec_injects_scoped_through_shim_path() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    setup_project(tmp.path());
+
+    let on_out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["auto", "on"])
+        .current_dir(tmp.path())
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to spawn envy auto on");
+    assert!(on_out.status.success());
+
+    envy(&["set", "EXEC_TEST_VAR=exec_hello"], tmp.path());
+
+    // Never steal an existing user shim; clean up only what we create.
+    let had = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["shim", "list"])
+        .current_dir(tmp.path())
+        .output()
+        .expect("failed to spawn envy shim list");
+    let had_printenv = String::from_utf8_lossy(&had.stdout).contains("printenv");
+    if !had_printenv {
+        let add = Command::new(env!("CARGO_BIN_EXE_envy"))
+            .args(["shim", "add", "printenv"])
+            .current_dir(tmp.path())
+            .output()
+            .expect("failed to spawn envy shim add");
+        assert!(add.status.success());
+    }
+
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .expect("home dir");
+    let shims = std::path::Path::new(&home).join(".envy").join("shims");
+    let path = format!(
+        "{}:{}",
+        shims.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let out = Command::new("printenv")
+        .arg("EXEC_TEST_VAR")
+        .current_dir(tmp.path())
+        .env("PATH", &path)
+        .stdin(Stdio::null())
+        .env_remove("ENVY_ENV")
+        .env_remove("ENVY_AUTO_INJECT")
+        .output()
+        .expect("failed to spawn printenv through shims");
+    assert!(
+        out.status.success(),
+        "shimmed printenv must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).as_ref(),
+        "exec_hello\n",
+        "child must see the injected secret"
+    );
+
+    // Kill-switch: the same shimmed command runs naked (missing var → exit 1).
+    let killed = Command::new("printenv")
+        .arg("EXEC_TEST_VAR")
+        .current_dir(tmp.path())
+        .env("PATH", &path)
+        .stdin(Stdio::null())
+        .env("ENVY_AUTO_INJECT", "0")
+        .env_remove("ENVY_ENV")
+        .output()
+        .expect("failed to spawn printenv with kill-switch");
+    assert_eq!(
+        killed.status.code(),
+        Some(1),
+        "kill-switch must run the command without secrets"
+    );
+    assert!(
+        killed.stdout.is_empty(),
+        "no secret may leak under the kill-switch"
+    );
+
+    if !had_printenv {
+        let rm = Command::new(env!("CARGO_BIN_EXE_envy"))
+            .args(["shim", "rm", "printenv"])
+            .current_dir(tmp.path())
+            .output()
+            .expect("failed to spawn envy shim rm");
+        assert!(rm.status.success());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 018 — exec injects scoped on Windows (via powershell, no shims needed)
+// ---------------------------------------------------------------------------
+
+/// Inject path on Windows: `exec` spawns powershell with the vault secret
+/// scoped to the child. Shim-file mechanics are covered by the hermetic
+/// reshim test plus unit tests.
+#[test]
+#[ignore = "requires a live OS keyring daemon (Secret Service / Keychain)"]
+#[cfg(windows)]
+fn cli_exec_injects_scoped_on_windows() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    setup_project(tmp.path());
+
+    let on_out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args(["auto", "on"])
+        .current_dir(tmp.path())
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to spawn envy auto on");
+    assert!(on_out.status.success());
+
+    envy(&["set", "EXEC_TEST_VAR=exec_hello"], tmp.path());
+
+    let out = Command::new(env!("CARGO_BIN_EXE_envy"))
+        .args([
+            "exec",
+            "--",
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            "Write-Output $env:EXEC_TEST_VAR",
+        ])
+        .current_dir(tmp.path())
+        .stdin(Stdio::null())
+        .env_remove("ENVY_ENV")
+        .env_remove("ENVY_AUTO_INJECT")
+        .output()
+        .expect("failed to spawn envy exec");
+    assert!(
+        out.status.success(),
+        "envy exec must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "exec_hello",
+        "child must see the injected secret"
+    );
+}

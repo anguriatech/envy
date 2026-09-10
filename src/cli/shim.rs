@@ -1,0 +1,1019 @@
+//! Transparent command shims (`envy reshim` / `envy shim` / `envy exec`).
+//!
+//! # Background
+//! `envy run -- cmd` is scoped and safe but opt-in per invocation, so humans
+//! and agents keep running bare commands. The containment-preserving answer
+//! (see `specs/018-transparent-shims/spec.md` ADR-001) is PATH shims:
+//! `~/.envy/shims/` first on `PATH`, each shim delegating to the hidden
+//! `envy exec` plumbing, which injects scoped exactly like `run`. The parent
+//! shell never holds secrets — `env | grep KEY` stays empty by construction.
+//!
+//! # Windows
+//! POSIX shims are shell scripts; Windows uses `.cmd` twins (CRLF), runnable
+//! from both cmd.exe and PowerShell with no ExecutionPolicy friction.
+//! Extensionless files are deliberately NOT written on Windows (a bare file
+//! would shadow `.cmd` under `CreateProcess` lookup). All logic lives in
+//! `envy exec` (Rust), so shims stay dumb on every OS.
+
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+
+use crate::cli::error::CliError;
+use crate::db::{ProjectId, Vault};
+
+// ---------------------------------------------------------------------------
+// Paths + toolchain detectors
+// ---------------------------------------------------------------------------
+
+/// Returns `~/.envy/shims` (created on demand by reshim/shim add).
+pub(super) fn shims_dir() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".envy").join("shims"))
+}
+
+/// One toolchain detector: trigger files in the project root imply commands.
+///
+/// Rule: the trigger must reliably imply the command (no guessing project
+/// contents). `docker` comes only from compose files — never from a bare
+/// `Dockerfile`, whose usage is dominated by `docker build`, where injected
+/// env can leak into image layers. Manual `shim add docker` stays possible
+/// for flows the user explicitly opts into (`compose up`-style).
+struct Detector {
+    files: &'static [&'static str],
+    commands: &'static [&'static str],
+}
+
+const DETECTORS: &[Detector] = &[
+    Detector {
+        files: &["package.json"],
+        commands: &["npm", "npx", "node"],
+    },
+    Detector {
+        files: &["yarn.lock"],
+        commands: &["yarn"],
+    },
+    Detector {
+        files: &["pnpm-lock.yaml"],
+        commands: &["pnpm"],
+    },
+    Detector {
+        files: &["Cargo.toml"],
+        commands: &["cargo"],
+    },
+    Detector {
+        files: &["pyproject.toml"],
+        commands: &["python", "uv"],
+    },
+    Detector {
+        files: &["requirements.txt", "setup.py"],
+        commands: &["python", "pip"],
+    },
+    Detector {
+        files: &["go.mod"],
+        commands: &["go"],
+    },
+    Detector {
+        files: &["Makefile", "makefile", "GNUmakefile"],
+        commands: &["make"],
+    },
+    Detector {
+        files: &["justfile", ".justfile"],
+        commands: &["just"],
+    },
+    Detector {
+        files: &["Gemfile"],
+        commands: &["bundle"],
+    },
+    Detector {
+        files: &["composer.json"],
+        commands: &["composer"],
+    },
+    Detector {
+        files: &["pom.xml"],
+        commands: &["mvn"],
+    },
+    Detector {
+        files: &["build.gradle", "build.gradle.kts"],
+        commands: &["gradle"],
+    },
+    Detector {
+        files: &["mix.exs"],
+        commands: &["mix", "elixir"],
+    },
+    Detector {
+        files: &["Taskfile.yml", "Taskfile.yaml"],
+        commands: &["task"],
+    },
+    Detector {
+        files: &["deno.json", "deno.jsonc"],
+        commands: &["deno"],
+    },
+    Detector {
+        files: &["bun.lockb", "bunfig.toml"],
+        commands: &["bun"],
+    },
+    Detector {
+        files: &[
+            "compose.yaml",
+            "compose.yml",
+            "docker-compose.yml",
+            "docker-compose.yaml",
+        ],
+        commands: &["docker", "docker-compose"],
+    },
+];
+
+/// Commands implied by trigger files in `project_dir` (sorted, deduped).
+/// Unreadable directories yield an empty set — detection never fails.
+pub(super) fn detect_commands(project_dir: &Path) -> Vec<String> {
+    let mut present = BTreeSet::new();
+    if let Ok(entries) = std::fs::read_dir(project_dir) {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                present.insert(name.to_string());
+            }
+        }
+    }
+    let mut out = BTreeSet::new();
+    for detector in DETECTORS {
+        if detector.files.iter().any(|f| present.contains(*f)) {
+            out.extend(detector.commands.iter().map(|c| c.to_string()));
+        }
+    }
+    out.into_iter().collect()
+}
+
+// ---------------------------------------------------------------------------
+// Shim files
+// ---------------------------------------------------------------------------
+
+/// Provenance markers parsed by `--prune` (`auto` vs `manual`).
+const AUTO_MARKER: &str = "envy-shim-source: auto";
+const MANUAL_MARKER: &str = "envy-shim-source: manual";
+
+/// Current shim template version, stamped into every generated file so
+/// `doctor` can spot stale shims and `reshim --force` can refresh them.
+const SHIM_VERSION: u32 = 1;
+
+/// POSIX shim body. Delegates everything to `envy exec` (anti-recursion and
+/// injection live there, in Rust) so the shim itself stays dumb.
+fn shim_script(name: &str, provenance: &str) -> String {
+    format!(
+        "#!/bin/sh\n# envy-shim: {name}\n# {provenance}\n# envy-shim-version: {SHIM_VERSION}\n# Generated by `envy reshim` — do not edit. All logic lives in `envy exec`.\nexec envy exec -- {name} \"$@\"\n"
+    )
+}
+
+/// Windows twin (CRLF — batch requires it).
+fn shim_cmd_script(name: &str, provenance: &str) -> String {
+    format!(
+        "@echo off\r\nrem envy-shim: {name}\r\nrem {provenance}\r\nrem envy-shim-version: {SHIM_VERSION}\r\nrem Generated by `envy reshim` — do not edit. All logic lives in `envy exec`.\r\nenvy exec -- {name} %*\r\n"
+    )
+}
+
+/// Shim file name on this platform (bare on Unix, `.cmd` on Windows).
+fn shim_file_name(name: &str) -> String {
+    if cfg!(windows) {
+        format!("{name}.cmd")
+    } else {
+        name.to_string()
+    }
+}
+
+/// Full path of a shim's platform file.
+fn shim_path(shims: &Path, name: &str) -> PathBuf {
+    shims.join(shim_file_name(name))
+}
+
+/// Sets the executable bit on Unix. No-op on Windows (mirrors the pre-commit
+/// git-hook installer in `commands.rs`).
+#[cfg(unix)]
+fn set_exec_bit(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(path)
+        .map_err(|e| e.to_string())?
+        .permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(path, perms).map_err(|e| e.to_string())
+}
+
+/// Writes a shim unless present (idempotent — never overwrites).
+/// `manual` selects the provenance marker (`--prune` keeps manual shims).
+pub(super) fn write_shim(shims: &Path, name: &str, manual: bool) -> Result<bool, String> {
+    let path = shim_path(shims, name);
+    if path.exists() {
+        return Ok(false);
+    }
+    let marker = if manual { MANUAL_MARKER } else { AUTO_MARKER };
+    let body = if cfg!(windows) {
+        shim_cmd_script(name, marker)
+    } else {
+        shim_script(name, marker)
+    };
+    std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    set_exec_bit(&path)?;
+    Ok(true)
+}
+
+/// Parses `# envy-shim-version: N` from shim content (`None` when absent or
+/// malformed — including shims written before versioning existed, which
+/// `doctor` therefore reports as stale).
+fn shim_version(content: &str) -> Option<u32> {
+    content
+        .lines()
+        .filter_map(|line| line.split_once("envy-shim-version:"))
+        .filter_map(|(_, version)| version.trim().parse().ok())
+        .next()
+}
+
+/// Rewrites one shim with the current template, preserving its provenance.
+/// Returns `true` when the file changed. Missing files count as unchanged —
+/// creation belongs to `write_shim`, so `--force` never resurrects names
+/// `--prune` removed.
+fn refresh_shim(shims: &Path, name: &str) -> Result<bool, String> {
+    let path = shim_path(shims, name);
+    let current = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e.to_string()),
+    };
+    let manual = current.contains(MANUAL_MARKER);
+    let marker = if manual { MANUAL_MARKER } else { AUTO_MARKER };
+    let fresh = if cfg!(windows) {
+        shim_cmd_script(name, marker)
+    } else {
+        shim_script(name, marker)
+    };
+    if fresh == current {
+        return Ok(false);
+    }
+    std::fs::write(&path, fresh).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    set_exec_bit(&path)?;
+    Ok(true)
+}
+
+/// Overwrites a shim's provenance to manual (protects an explicitly added
+/// command from a later `--prune`).
+fn mark_shim_manual(shims: &Path, name: &str) -> Result<(), String> {
+    let path = shim_path(shims, name);
+    let body = if cfg!(windows) {
+        shim_cmd_script(name, MANUAL_MARKER)
+    } else {
+        shim_script(name, MANUAL_MARKER)
+    };
+    std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    set_exec_bit(&path)?;
+    Ok(())
+}
+
+/// Lists installed shim names (sorted, deduped). Missing dir → empty.
+pub(super) fn list_shims(shims: &Path) -> Vec<String> {
+    let mut out = BTreeSet::new();
+    if let Ok(entries) = std::fs::read_dir(shims) {
+        for entry in entries.flatten() {
+            let file_name = entry.file_name().to_string_lossy().into_owned();
+            #[cfg(windows)]
+            let file_name = file_name
+                .strip_suffix(".cmd")
+                .unwrap_or(&file_name)
+                .to_string();
+            if !file_name.is_empty() && !file_name.starts_with('.') {
+                out.insert(file_name);
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// Removes auto-provenance shims not in `wanted` (manual ones always kept).
+/// Returns removed names, sorted.
+pub(super) fn prune_shims(shims: &Path, wanted: &[String]) -> Vec<String> {
+    let want: BTreeSet<&str> = wanted.iter().map(|s| s.as_str()).collect();
+    let mut removed = Vec::new();
+    for name in list_shims(shims) {
+        if want.contains(name.as_str()) {
+            continue;
+        }
+        let path = shim_path(shims, &name);
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        if content.contains(AUTO_MARKER) && std::fs::remove_file(&path).is_ok() {
+            removed.push(name);
+        }
+    }
+    removed.sort();
+    removed
+}
+
+/// Shim names become file names under `~/.envy/shims` — reject path tricks
+/// (separators, dot-dirs, hidden files) rather than sanitising silently.
+/// Executable extensions (`.cmd`/`.bat`) are rejected too: they would double
+/// up (`npm.cmd` → `npm.cmd.cmd`) or silently never fire, never what the
+/// user meant.
+pub(super) fn is_valid_shim_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('.')
+        && name != ".."
+        && !has_executable_extension(name)
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+}
+
+/// True for names that already carry a Windows executable extension —
+/// case-insensitive, since platform lookup is.
+fn has_executable_extension(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with(".cmd") || lower.ends_with(".bat")
+}
+
+// ---------------------------------------------------------------------------
+// Binary resolution (anti-recursion)
+// ---------------------------------------------------------------------------
+
+/// `PATHEXT` extensions (Windows only), with the system default as fallback.
+#[cfg(windows)]
+fn pathext_list() -> Vec<String> {
+    std::env::var("PATHEXT")
+        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string())
+        .split(';')
+        .map(|e| e.trim().to_string())
+        .filter(|e| !e.is_empty())
+        .collect()
+}
+
+/// First `PATH` hit for `cmd`, platform-aware. Pure over `dirs` (testable):
+/// existence only — executability is the spawner's loud error, not ours.
+fn first_on_path(cmd: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
+    for dir in dirs {
+        #[cfg(windows)]
+        {
+            for ext in pathext_list() {
+                let candidate = dir.join(format!("{cmd}{ext}"));
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let candidate = dir.join(cmd);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+/// Directory equality for the anti-recursion skip (spec 018 P1).
+///
+/// Plain `==` already ignores trailing slashes, but a symlinked `$HOME`,
+/// a different case on Windows, or `..` segments would defeat a lexical
+/// compare and re-resolve the shim into itself (fork bomb via `exec`).
+/// The canonical fallback costs syscalls only on mismatch — the common
+/// exact-match path stays a pure string compare. Unresolvable dirs never
+/// compare equal (two missing dirs must not shadow each other).
+fn same_dir(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// `first_on_path` minus the shims dir, so `envy exec` (and anything it
+/// spawns that re-resolves, e.g. npm calling npx) never recurses into shims.
+fn find_in_dirs(cmd: &str, dirs: &[PathBuf], shims_dir: &Path) -> Option<PathBuf> {
+    for dir in dirs {
+        if same_dir(dir, shims_dir) {
+            continue;
+        }
+        if let Some(hit) = first_on_path(cmd, std::slice::from_ref(dir)) {
+            return Some(hit);
+        }
+    }
+    None
+}
+
+/// Resolves `cmd` as the shell would, but never to our own shims dir.
+/// Explicit paths (`./x`, `/bin/y`, `a\\b`) pass through untouched.
+pub(super) fn resolve_real(cmd: &str, shims_dir: &Path) -> Option<PathBuf> {
+    if cmd.contains('/') || cmd.contains('\\') {
+        let direct = PathBuf::from(cmd);
+        return direct.is_file().then_some(direct);
+    }
+    let path_var = std::env::var_os("PATH")?;
+    let dirs: Vec<PathBuf> = std::env::split_paths(&path_var).collect();
+    find_in_dirs(cmd, &dirs, shims_dir)
+}
+
+// ---------------------------------------------------------------------------
+// exec environment selection
+// ---------------------------------------------------------------------------
+
+/// Target env: `--env` flag > `ENVY_ENV` > `development`, lowercased like core.
+fn resolve_exec_env(flag: Option<&str>) -> String {
+    let raw = match flag {
+        Some(f) if !f.trim().is_empty() => f.trim().to_string(),
+        _ => std::env::var("ENVY_ENV").unwrap_or_default(),
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        crate::core::DEFAULT_ENV.to_string()
+    } else {
+        trimmed.to_lowercase()
+    }
+}
+
+/// Global kill-switch: `ENVY_AUTO_INJECT=0|false|no|off` never injects.
+/// Anything else (including `1`/`true`/unset) respects the per-project
+/// `auto_inject` flag — there is intentionally no force-enable: bypassing the
+/// opt-in silently is exactly what the flag exists to prevent (B1).
+fn auto_inject_killed() -> bool {
+    matches!(
+        std::env::var("ENVY_AUTO_INJECT")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "0" | "false" | "no" | "off"
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Command handlers
+// ---------------------------------------------------------------------------
+
+/// Spawns `bin` transparently without touching the vault (fast path for
+/// opted-out / project-less invocations). Delegates to the shared spawn in
+/// `commands` so Windows batch routing applies here too.
+fn spawn_direct(bin: &Path, args: &[String]) -> i32 {
+    super::commands::spawn_transparent(bin, args)
+}
+
+/// `envy reshim [--prune]` — generate shims for the current project's
+/// toolchains. Manifest read + fs only: works without vault or keyring.
+pub(super) fn cmd_reshim(manifest_dir: &Path, prune: bool, force: bool) -> Result<(), CliError> {
+    let shims =
+        shims_dir().ok_or_else(|| CliError::Output("cannot determine home directory".into()))?;
+    std::fs::create_dir_all(&shims).map_err(|e| CliError::Output(e.to_string()))?;
+    // The flag lives in the manifest we were given (re-read, no vault).
+    // Generating while off is harmless (shims pass through), but say so —
+    // otherwise "reshim ran and nothing injects" is indistinguishable magic.
+    let auto_on = crate::core::find_manifest(manifest_dir)
+        .map(|(manifest, _)| manifest.auto_inject)
+        .unwrap_or(false);
+    if !auto_on {
+        println!("note: auto-inject is off here — shims will pass through until `envy auto on`.");
+    }
+    let wanted = detect_commands(manifest_dir);
+    let mut refreshed = Vec::new();
+    if force {
+        for name in list_shims(&shims) {
+            match refresh_shim(&shims, &name) {
+                Ok(true) => refreshed.push(name),
+                Ok(false) => {}
+                Err(e) => eprintln!("warning: could not refresh shim for '{name}': {e}"),
+            }
+        }
+    }
+    let mut created = Vec::new();
+    for name in &wanted {
+        match write_shim(&shims, name, false) {
+            Ok(true) => created.push(name.clone()),
+            Ok(false) => {}
+            Err(e) => eprintln!("warning: could not write shim for '{name}': {e}"),
+        }
+    }
+    let pruned = if prune {
+        prune_shims(&shims, &wanted)
+    } else {
+        Vec::new()
+    };
+    if created.is_empty() && pruned.is_empty() && refreshed.is_empty() {
+        println!("reshim: {} shim(s) already up to date.", wanted.len());
+    } else {
+        if !refreshed.is_empty() {
+            println!(
+                "reshim: refreshed {}: {}",
+                refreshed.len(),
+                refreshed.join(", ")
+            );
+        }
+        if !created.is_empty() {
+            println!("reshim: created {}: {}", created.len(), created.join(", "));
+        }
+        for name in &pruned {
+            println!("reshim: pruned {name}");
+        }
+    }
+    Ok(())
+}
+
+/// `envy shim add|rm|list` — manual shim management. Global (no manifest,
+/// no vault): works from any directory.
+pub(super) fn cmd_shim(action: super::ShimAction) -> Result<(), CliError> {
+    use super::ShimAction;
+    let shims =
+        shims_dir().ok_or_else(|| CliError::Output("cannot determine home directory".into()))?;
+    match action {
+        ShimAction::List => {
+            for name in list_shims(&shims) {
+                println!("{name}");
+            }
+            Ok(())
+        }
+        ShimAction::Add { name } => {
+            if !is_valid_shim_name(&name) {
+                return Err(CliError::InvalidShimName(name));
+            }
+            std::fs::create_dir_all(&shims).map_err(|e| CliError::Output(e.to_string()))?;
+            if shim_path(&shims, &name).exists() {
+                mark_shim_manual(&shims, &name).map_err(CliError::Output)?;
+                println!("shim for '{name}' already exists — marked manual (safe from --prune).");
+            } else {
+                write_shim(&shims, &name, true).map_err(CliError::Output)?;
+                println!("✓ shim added for '{name}'.");
+            }
+            Ok(())
+        }
+        ShimAction::Rm { name } => {
+            let path = shim_path(&shims, &name);
+            match std::fs::remove_file(&path) {
+                Ok(()) => {
+                    println!("✓ shim removed for '{name}'.");
+                    Ok(())
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(CliError::FileNotFound(
+                    path.display().to_string(),
+                    "no such shim".into(),
+                )),
+                Err(e) => Err(CliError::Output(e.to_string())),
+            }
+        }
+    }
+}
+
+/// `envy exec` — hidden plumbing behind shims.
+///
+/// Resolves the real binary outside the shims dir, then behaves exactly like
+/// `envy run` (scoped injection + exact exit-code proxy, audited as `run`)
+/// when the project opted in — otherwise spawns transparently with zero vault
+/// access. Vault failures are loud (stderr, exit 4), never silent.
+pub(super) fn cmd_exec(env_flag: Option<&str>, command: &[String]) -> i32 {
+    let Some((bin, args)) = command.split_first() else {
+        eprintln!("error: envy exec requires a command");
+        return 127;
+    };
+    let real: PathBuf = match shims_dir() {
+        Some(shims) => match resolve_real(bin, &shims) {
+            Some(p) => p,
+            None => {
+                eprintln!("error: `{bin}` not found (excluding envy shims)");
+                return 127;
+            }
+        },
+        // No home directory: fall back to plain spawn semantics.
+        None => PathBuf::from(bin),
+    };
+
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("error: cannot determine current directory: {e}");
+            return 1;
+        }
+    };
+    let killed = auto_inject_killed();
+    let manifest_opt = if killed {
+        None
+    } else {
+        match crate::core::find_manifest(&cwd) {
+            Ok((manifest, _)) if manifest.auto_inject => Some(manifest),
+            _ => None,
+        }
+    };
+    let Some(manifest) = manifest_opt else {
+        return spawn_direct(&real, args);
+    };
+
+    let master_key = match crate::crypto::get_or_create_master_key() {
+        Ok(k) => k,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 4;
+        }
+    };
+    let vault = match Vault::open(&super::vault_path(), master_key.as_ref()) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("error: could not open vault: {e}");
+            return 4;
+        }
+    };
+    // Delegate the inject path to `run`: single spawn/audit/exit-code
+    // implementation. The absolute `real` path bypasses PATH (no recursion).
+    let env_name = resolve_exec_env(env_flag);
+    let project_id = ProjectId(manifest.project_id);
+    let mut full = vec![real.to_string_lossy().into_owned()];
+    full.extend_from_slice(args);
+    super::commands::cmd_run(&vault, &master_key, &project_id, &env_name, &full)
+}
+
+/// `envy doctor [CMD...]` — setup diagnostics. Exit 0 clean, 1 findings.
+/// Reads manifest flags and the filesystem only; never touches the vault.
+pub(super) fn cmd_doctor(targets: &[String]) -> i32 {
+    let mut problems = 0;
+    let Some(ref shims) = shims_dir() else {
+        println!("✗ cannot determine home directory — shims unavailable.");
+        return 1;
+    };
+    let path_dirs: Vec<PathBuf> =
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+
+    // C0: envy itself resolvable (every shim delegates to it).
+    if first_on_path("envy", &path_dirs).is_none() {
+        println!("✗ `envy` not found on PATH — shims cannot delegate.");
+        problems += 1;
+    } else {
+        println!("✓ `envy` resolvable on PATH.");
+    }
+
+    // C1: shims dir on PATH.
+    if path_dirs.iter().any(|d| d == shims) {
+        println!("✓ shims dir on PATH.");
+    } else {
+        println!("✗ ~/.envy/shims is not on PATH.");
+        println!("  fix: run `envy shell-init <shell>`, paste the line last in your rc, restart.");
+        problems += 1;
+    }
+
+    // C2: order vs version managers that prepend (silent shadowing).
+    const PREPENDERS: &[&str] = &[
+        "fnm", "nvm", ".nvm", "volta", "mise", "rbenv", "pyenv", "asdf", ".asdf",
+    ];
+    if let Some(idx) = path_dirs.iter().position(|d| d == shims) {
+        let mut shadowers = Vec::new();
+        for dir in &path_dirs[..idx] {
+            // Component equality, not substring: `.../promise/...` must not
+            // match `mise`, but real layouts (`~/.nvm/...`, `.../fnm/...`)
+            // always carry the manager name as a whole component.
+            let hits = dir.components().any(|component| {
+                let part = component.as_os_str().to_string_lossy().to_lowercase();
+                PREPENDERS.iter().any(|m| part == *m)
+            });
+            if hits {
+                shadowers.push(dir.display().to_string());
+            }
+        }
+        if shadowers.is_empty() {
+            println!("✓ shims precede version managers.");
+        } else {
+            println!("✗ PATH entries above shims may shadow them:");
+            for shadow in &shadowers {
+                println!("    {shadow}");
+            }
+            println!("  fix: keep the envy line last in your rc, then restart.");
+            problems += 1;
+        }
+    }
+
+    // C3: project coverage (only inside an opted-in project).
+    if let Ok(cwd) = std::env::current_dir() {
+        check_project_coverage(&cwd, shims, &mut problems);
+    }
+
+    // C4: stale templates (a template change only lands via --force).
+    let stale: Vec<String> = list_shims(shims)
+        .into_iter()
+        .filter(|name| {
+            let content =
+                std::fs::read_to_string(shims.join(shim_file_name(name))).unwrap_or_default();
+            shim_version(&content) != Some(SHIM_VERSION)
+        })
+        .collect();
+    if !stale.is_empty() {
+        println!(
+            "✗ {} shim(s) with an outdated template: {} — run `envy reshim --force`.",
+            stale.len(),
+            stale.join(", ")
+        );
+        problems += 1;
+    }
+
+    // C5: per-command resolution.
+    for cmd in targets {
+        match command_coverage(cmd, shims, &path_dirs) {
+            Coverage::Shim => println!("✓ '{cmd}' resolves to envy shims."),
+            Coverage::Elsewhere(other) => {
+                println!(
+                    "✗ '{cmd}' resolves to {} — runs WITHOUT secrets.",
+                    other.display()
+                );
+                println!("  fix: `envy shim add {cmd}` or `envy run -- …`.");
+                problems += 1;
+            }
+            Coverage::Missing => {
+                println!("✗ '{cmd}' not found on PATH.");
+                problems += 1;
+            }
+        }
+    }
+
+    if problems == 0 {
+        println!("doctor: all checks passed.");
+        0
+    } else {
+        println!("doctor: {problems} problem(s) found.");
+        1
+    }
+}
+
+/// C3 of `doctor`: coverage for the opted-in project at `cwd`, if any.
+///
+/// Split out (rather than nested `if let`s) so the linter stays quiet;
+/// prints nothing when `cwd` holds no project.
+fn check_project_coverage(cwd: &Path, shims: &Path, problems: &mut i32) {
+    let Ok((manifest, project_dir)) = crate::core::find_manifest(cwd) else {
+        return;
+    };
+    if !manifest.auto_inject {
+        println!("· auto-inject is off here — shims pass through.");
+        return;
+    }
+    let wanted = detect_commands(&project_dir);
+    let have: BTreeSet<String> = list_shims(shims).into_iter().collect();
+    let missing: Vec<String> = wanted.into_iter().filter(|c| !have.contains(c)).collect();
+    if missing.is_empty() {
+        println!("✓ project shims up to date.");
+    } else {
+        println!(
+            "✗ missing shims for this project: {} — run `envy reshim`.",
+            missing.join(", ")
+        );
+        *problems += 1;
+    }
+}
+
+/// Where a command resolves (used by `doctor`).
+enum Coverage {
+    /// First PATH hit lives in the shims dir.
+    Shim,
+    /// Resolves elsewhere (runs WITHOUT secrets) — path shown for the fix.
+    Elsewhere(PathBuf),
+    /// Not found on PATH at all.
+    Missing,
+}
+
+/// Classifies one command name against the current `PATH`.
+fn command_coverage(cmd: &str, shims: &Path, path_dirs: &[PathBuf]) -> Coverage {
+    if cmd.contains('/') || cmd.contains('\\') {
+        return Coverage::Elsewhere(PathBuf::from(cmd));
+    }
+    match first_on_path(cmd, path_dirs) {
+        None => Coverage::Missing,
+        Some(full) if full.parent() == Some(shims) => Coverage::Shim,
+        Some(full) => Coverage::Elsewhere(full),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests (no keyring)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detectors_map_trigger_files() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        for file in [
+            "package.json",
+            "Cargo.toml",
+            "pom.xml",
+            "build.gradle.kts",
+            "mix.exs",
+            "Taskfile.yml",
+            "deno.json",
+            "bun.lockb",
+            "compose.yaml",
+        ] {
+            std::fs::write(tmp.path().join(file), "").expect("write trigger");
+        }
+        assert_eq!(
+            detect_commands(tmp.path()),
+            vec![
+                "bun".to_string(),
+                "cargo".to_string(),
+                "deno".to_string(),
+                "docker".to_string(),
+                "docker-compose".to_string(),
+                "elixir".to_string(),
+                "gradle".to_string(),
+                "mix".to_string(),
+                "mvn".to_string(),
+                "node".to_string(),
+                "npm".to_string(),
+                "npx".to_string(),
+                "task".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn detectors_ignore_dotenv_and_docker_by_design() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(tmp.path().join(".env"), "FOO=bar").expect("write");
+        std::fs::write(tmp.path().join("Dockerfile"), "FROM x").expect("write");
+        // `.env` is never a trigger; `docker` is excluded (image-layer risk).
+        assert!(detect_commands(tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn detectors_missing_dir_is_empty() {
+        assert!(detect_commands(Path::new("/nonexistent-envy-test-dir-xyz")).is_empty());
+    }
+
+    #[test]
+    fn shim_templates_delegate_to_exec() {
+        let sh = shim_script("npm", AUTO_MARKER);
+        assert!(sh.starts_with("#!/bin/sh\n"), "posix needs a shebang");
+        assert!(sh.contains("exec envy exec -- npm \"$@\""), "must delegate");
+        assert!(sh.contains(AUTO_MARKER), "must carry provenance");
+        let cmd = shim_cmd_script("npm", MANUAL_MARKER);
+        assert!(cmd.contains("\r\n"), "batch requires CRLF");
+        assert!(cmd.contains("envy exec -- npm %*"), "must delegate");
+        assert!(cmd.contains(MANUAL_MARKER), "must carry provenance");
+    }
+
+    #[test]
+    fn write_and_prune_round_trip() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let shims = tmp.path();
+        assert!(write_shim(shims, "npm", false).expect("write npm"));
+        assert!(write_shim(shims, "mytool", true).expect("write manual"));
+        // Idempotent: second write leaves the file untouched.
+        assert!(!write_shim(shims, "npm", false).expect("rewrite npm"));
+        assert_eq!(
+            list_shims(shims),
+            vec!["mytool".to_string(), "npm".to_string()]
+        );
+        // Prune removes only auto shims outside the wanted set.
+        assert_eq!(
+            prune_shims(shims, &["mytool".to_string()]),
+            vec!["npm".to_string()]
+        );
+        assert!(!shim_path(shims, "npm").exists());
+        assert!(shim_path(shims, "mytool").exists());
+    }
+
+    #[test]
+    fn shim_version_parses_and_flags_legacy() {
+        assert_eq!(
+            shim_version("# envy-shim: npm\n# envy-shim-version: 1\n"),
+            Some(1)
+        );
+        assert_eq!(shim_version("# no version here\nexec envy exec\n"), None);
+        assert_eq!(shim_version("# envy-shim-version: banana\n"), None);
+        assert_eq!(shim_version(""), None);
+    }
+
+    #[test]
+    fn refresh_rewrites_stale_keeping_provenance() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let shims = tmp.path();
+        // Legacy content (pre-version template), manual provenance.
+        let legacy = "#!/bin/sh\n# envy-shim-source: manual\nexec envy exec -- mytool\n";
+        std::fs::write(shims.join(shim_file_name("mytool")), legacy).expect("write legacy");
+        assert!(refresh_shim(shims, "mytool").expect("refresh"));
+        let content = std::fs::read_to_string(shims.join(shim_file_name("mytool"))).expect("read");
+        assert!(content.contains("envy-shim-version: 1"));
+        assert!(content.contains("envy-shim-source: manual"));
+        // Second refresh is a no-op; missing files are not resurrected.
+        assert!(!refresh_shim(shims, "mytool").expect("re-refresh"));
+        assert!(!refresh_shim(shims, "ghost").expect("refresh missing"));
+    }
+
+    #[test]
+    fn shim_names_reject_path_tricks() {
+        for good in ["npm", "node", "my-tool", "x.y", "z_z", "UV"] {
+            assert!(is_valid_shim_name(good), "{good} must be valid");
+        }
+        for bad in ["", ".", "..", ".hidden", "a/b", "a\\b", "a b", "a;b", "a$"] {
+            assert!(!is_valid_shim_name(bad), "{bad} must be rejected");
+        }
+        for bad_ext in ["x.cmd", "x.BAT", "npm.CMD"] {
+            assert!(
+                !is_valid_shim_name(bad_ext),
+                "{bad_ext} must be rejected (would double the extension)"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn resolution_skips_shims_dir_on_unix() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let shims = tmp.path().join("shims");
+        let real = tmp.path().join("real");
+        std::fs::create_dir_all(&shims).expect("mkdir shims");
+        std::fs::create_dir_all(&real).expect("mkdir real");
+        std::fs::write(shims.join("mytool"), b"shim").expect("write shim");
+        std::fs::write(real.join("mytool"), b"real").expect("write real");
+        let dirs = vec![shims.clone(), real.clone()];
+        assert_eq!(
+            find_in_dirs("mytool", &dirs, &shims),
+            Some(real.join("mytool"))
+        );
+        // Without the skip, the shim would win.
+        assert_eq!(first_on_path("mytool", &dirs), Some(shims.join("mytool")));
+        assert_eq!(find_in_dirs("nope-no-tool", &dirs, &shims), None);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn same_dir_survives_symlinks_slashes_and_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let real = tmp.path().join("realdir");
+        std::fs::create_dir_all(&real).expect("mkdir");
+        let link = tmp.path().join("linkdir");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+        assert!(same_dir(&real, &link), "symlink must equal its target");
+        assert!(
+            same_dir(&real, &real.join("")),
+            "trailing slash must not matter"
+        );
+        assert!(
+            !same_dir(&tmp.path().join("nope-a"), &tmp.path().join("nope-b")),
+            "two missing dirs must never compare equal"
+        );
+    }
+
+    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn auto_inject_kill_switch_has_no_force_enable() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        for killed in ["0", "false", "no", "off", " 0 ", "OFF"] {
+            unsafe { std::env::set_var("ENVY_AUTO_INJECT", killed) };
+            assert!(auto_inject_killed(), "{killed:?} must kill injection");
+        }
+        // Anything else — including the removed force values — respects the flag.
+        for normal in ["1", "true", "yes", "on", "banana"] {
+            unsafe { std::env::set_var("ENVY_AUTO_INJECT", normal) };
+            assert!(!auto_inject_killed(), "{normal:?} must not kill injection");
+        }
+        unsafe { std::env::remove_var("ENVY_AUTO_INJECT") };
+        assert!(!auto_inject_killed(), "unset must not kill injection");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn resolution_skips_shims_dir_on_windows() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let shims = tmp.path().join("shims");
+        let real = tmp.path().join("real");
+        std::fs::create_dir_all(&shims).expect("mkdir shims");
+        std::fs::create_dir_all(&real).expect("mkdir real");
+        std::fs::write(shims.join("mytool.cmd"), b"shim").expect("write shim");
+        std::fs::write(real.join("mytool.cmd"), b"real").expect("write real");
+        let dirs = vec![shims.clone(), real.clone()];
+        // Case-insensitive compare: the returned path carries the casing of
+        // the machine's own PATHEXT entry (e.g. `mytool.CMD`), which Windows
+        // resolves identically.
+        let lower = |p: Option<PathBuf>| p.map(|x| x.to_string_lossy().to_lowercase());
+        assert_eq!(
+            lower(find_in_dirs("mytool", &dirs, &shims)),
+            lower(Some(real.join("mytool.cmd"))),
+            "real dir must win over shims"
+        );
+        assert_eq!(
+            lower(first_on_path("mytool", &dirs)),
+            lower(Some(shims.join("mytool.cmd"))),
+            "without the skip, the shim would win"
+        );
+        assert_eq!(find_in_dirs("nope-no-tool", &dirs, &shims), None);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn batch_detection_is_case_insensitive() {
+        assert!(crate::cli::commands::is_batch_file(Path::new("npm.cmd")));
+        assert!(crate::cli::commands::is_batch_file(Path::new("X.BAT")));
+        assert!(!crate::cli::commands::is_batch_file(Path::new("npm")));
+        assert!(!crate::cli::commands::is_batch_file(Path::new("npm.exe")));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn resolution_ignores_extensions_on_unix() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(tmp.path().join("mytool.cmd"), b"shim").expect("write");
+        let dirs = vec![tmp.path().to_path_buf()];
+        assert_eq!(find_in_dirs("mytool", &dirs, Path::new("elsewhere")), None);
+    }
+}
